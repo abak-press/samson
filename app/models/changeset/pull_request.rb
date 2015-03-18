@@ -3,7 +3,7 @@ class Changeset::PullRequest
   RISKS_SECTION = /#+\s+Risks.*\n/i
 
   # Matches URLs to JIRA issues.
-  JIRA_ISSUE = %r[https://\w+\.atlassian\.net/browse/[\w-]+]
+  JIRA_ISSUE = %r[https://jira\.railsc\.ru/browse/[\w-]+]
 
   # Matches "VOICE-1234" or "[VOICE-1234]"
   JIRA_CODE = %r[(\[)*([a-zA-Z]+)-((\d)+)(\])*]
