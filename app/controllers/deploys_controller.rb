@@ -34,9 +34,11 @@ class DeploysController < ApplicationController
 
   def new
     @deploy = @project.deploys.build(params.permit(:stage_id, :reference))
+    unauthorized! if stage.name[/production/i].present? && !current_user.is_admin?
   end
 
   def create
+    unauthorized! if stage.name[/production/i].present? && !current_user.is_admin?
     deploy_service = DeployService.new(@project, current_user)
     @deploy = deploy_service.deploy!(stage, reference)
 
