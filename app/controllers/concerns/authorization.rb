@@ -18,6 +18,10 @@ module Authorization
 
   def authorize_deployer!
     unauthorized! unless current_user.is_deployer?
+
+    if respond_to?(:stage, true) && send(:stage).name[/production/i].present? && !current_user.is_admin?
+      unauthorized!
+    end
   end
 
   def unauthorized!
