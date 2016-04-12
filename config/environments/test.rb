@@ -14,8 +14,8 @@ Samson::Application.configure do
 
   # Configure static asset server for tests with Cache-Control for performance.
   # We don't need assets in test, so no need to compile/serve them
-  config.serve_static_files  = false
-  config.assets.compile = false
+  config.serve_static_files = false
+  config.assets.compile = !!ENV['PRECOMPILE']
   config.static_cache_control = "public, max-age=3600"
 
   # Show full error reports and disable caching.
@@ -47,10 +47,15 @@ Samson::Application.configure do
   config.samson.github.admin_team = 'admins'
   config.samson.github.deploy_team = 'deployers'
 
+  config.samson.docker.registry = 'docker-registry.example.com'
+
   config.active_support.test_order = :random
 end
 
 ENV['SECRET_TOKEN'] = 'd6054cf90db212c8fbc070c896c30398e3275532c5602bdf00cb153b806c000e4e46fac2f3acc0783822b8f6d30b5913b6fbcfdd24914553e745b8aa8ddfa5a4'
 ENV['DEFAULT_URL'] = 'http://www.test-url.com'
 ENV['DATADOG_API_KEY'] = 'dapikey'
-ENV['DATADOG_APP_KEY'] = 'dappkey'
+ENV['DATADOG_APPLICATION_KEY'] = 'dappkey'
+ENV['JENKINS_URL']='http://www.test-url.com'
+ENV['JENKINS_USERNAME']='user@test.com'
+ENV['JENKINS_API_KEY']='japikey'

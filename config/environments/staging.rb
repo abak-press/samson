@@ -20,7 +20,7 @@ Samson::Application.configure do
   # config.action_dispatch.rack_cache = true
 
   # Disable Rails's static asset server (Apache or nginx will already do this).
-  config.serve_static_files = true
+  config.serve_static_files = false
 
   # Compress JavaScripts and CSS.
   config.assets.js_compressor = :uglifier
@@ -40,7 +40,7 @@ Samson::Application.configure do
   # config.action_dispatch.x_sendfile_header = 'X-Accel-Redirect' # for nginx
 
   # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
+  config.force_ssl = ENV['FORCE_SSL'] == '1'
 
   # Set to :debug to see everything in the log.
   config.log_level = :info
@@ -76,12 +76,22 @@ Samson::Application.configure do
   # config.autoflush_log = false
 
   # Use default logging formatter so that PID and timestamp are not suppressed.
-  config.log_formatter = ::Logger::Formatter.new
+  # config.log_formatter = ::Logger::Formatter.new
 
   # Lograge
-  # require 'syslog/logger'
-  # config.logger = Syslog::Logger.new('samson')
+  config.lograge.enabled = true
 
-  # config.lograge.enabled = true
-  # config.lograge.formatter = Lograge::Formatters::Logstash.new
+  # custom_options can be a lambda or hash
+  # if it's a lambda then it must return a hash
+  config.lograge.custom_options = lambda do |event|
+    unwanted_keys = %w[format action controller]
+    params = event.payload[:params].reject { |key,_| unwanted_keys.include? key }
+
+    # capture some specific timing values you are interested in
+    { :params => params }
+  end
+
+  require 'syslog/logger'
+  config.logger = Syslog::Logger.new('samson')
+  config.lograge.formatter = Lograge::Formatters::Logstash.new
 end

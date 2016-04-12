@@ -1,6 +1,7 @@
 class ReleasesController < ApplicationController
-  before_action :authorize_deployer!, except: [:show, :index]
-  before_action :find_project
+  include ProjectLevelAuthorization
+
+  before_action :authorize_project_deployer!, except: [:show, :index]
 
   def show
     @release = @project.releases.find_by_version!(params[:id])
@@ -18,14 +19,10 @@ class ReleasesController < ApplicationController
 
   def create
     @release = ReleaseService.new(@project).create_release!(release_params)
-    redirect_to project_release_path(@project, @release)
+    redirect_to [@project, @release]
   end
 
   private
-
-  def find_project
-    @project = Project.find_by_param!(params[:project_id])
-  end
 
   def release_params
     params.require(:release).permit(:commit).merge(author: current_user)

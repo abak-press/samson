@@ -2,6 +2,11 @@ class Integrations::GithubController < Integrations::BaseController
   cattr_accessor(:github_hook_secret) { ENV['GITHUB_HOOK_SECRET'] }
 
   HMAC_DIGEST = OpenSSL::Digest.new('sha1')
+  WEBHOOK_HANDLERS = {
+    'push' => Changeset::CodePush,
+    'pull_request' => Changeset::PullRequest,
+    'issue_comment' => Changeset::IssueComment
+  }
 
   protected
 
@@ -16,19 +21,32 @@ class Integrations::GithubController < Integrations::BaseController
       request.body.tap(&:rewind).read
     )
 
-    request.headers['X-Hub-Signature'] == "sha1=#{hmac}"
+    Rack::Utils.secure_compare(request.headers['X-Hub-Signature'].to_s, "sha1=#{hmac}")
   end
 
   def valid_payload?
-    request.headers['X-Github-Event'] == 'push'
+    webhook_handler && webhook_handler.valid_webhook?(params)
   end
 
   def commit
-    params[:after]
+    webhook_event.sha
   end
 
   def branch
-    # Github returns full ref e.g. refs/heads/...
-    params[:ref]
+    webhook_event.branch
+  end
+
+  private
+
+  def service_type
+    webhook_event.service_type
+  end
+
+  def webhook_event
+    @webhook_event ||= webhook_handler.changeset_from_webhook(project, params)
+  end
+
+  def webhook_handler
+    WEBHOOK_HANDLERS[request.headers['X-Github-Event']]
   end
 end

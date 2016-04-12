@@ -1,16 +1,16 @@
 require_relative '../test_helper'
 
 describe GitRepository do
-  let(:repository_url) { Dir.mktmpdir }
-  let(:project) { Project.new(id: 99999, name: 'test_project', repository_url: repository_url) }
+  include GitRepoTestHelper
+
+  let(:project) { Project.new(id: 99999, name: 'test_project', repository_url: repo_temp_dir) }
   let(:repository) { project.repository }
-  let(:executor) { TerminalExecutor.new(StringIO.new) }
   let(:repo_dir) { File.join(GitRepository.cached_repos_dir, project.repository_directory) }
 
   after do
-    FileUtils.rm_rf(repository_url)
+    FileUtils.rm_rf(repo_temp_dir)
     FileUtils.rm_rf(repo_dir)
-    FileUtils.rm_rf(repository.repo_cache_dir)
+    repository.clean!
   end
 
   it 'checks that the project repository is pointing to the correct url and directory' do
@@ -22,7 +22,7 @@ describe GitRepository do
   it 'should clone a repository' do
     Dir.mktmpdir do |dir|
       create_repo_with_tags
-      repository.clone!(from: repository_url, to: dir)
+      repository.clone!(from: repo_temp_dir, to: dir)
       Dir.exist?(dir).must_equal true
     end
   end
@@ -53,28 +53,101 @@ describe GitRepository do
   it 'should switch to a different branch' do
     create_repo_with_an_additional_branch
     repository.clone!.must_equal(true)
-    repository.send(:checkout!, git_reference: 'master').must_equal(true)
+    repository.send(:checkout!, 'master').must_equal(true)
     Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('master') }
-    repository.send(:checkout!, git_reference: 'test_user/test_branch').must_equal(true)
+    repository.send(:checkout!, 'test_user/test_branch').must_equal(true)
     Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('test_user/test_branch') }
   end
 
-  it 'returns the tags repository' do
-    create_repo_with_tags
-    repository.clone!(executor: TerminalExecutor.new(StringIO.new), mirror: true)
-    repository.tags.to_a.must_equal %w(v1 )
+  describe "#commit_from_ref" do
+    it 'returns the short commit id' do
+      create_repo_with_tags
+      repository.clone!
+      repository.commit_from_ref('master').must_match /^[0-9a-f]{7}$/
+    end
+
+    it 'returns the full commit id with nil length' do
+      create_repo_with_tags
+      repository.clone!
+      repository.commit_from_ref('master', length: nil).must_match /^[0-9a-f]{40}$/
+    end
+
+    it 'returns nil if ref does not exist' do
+      create_repo_with_tags
+      repository.clone!
+      repository.commit_from_ref('NOT A VALID REF', length: nil).must_be_nil
+    end
+
+    it 'returns the commit of a branch' do
+      create_repo_with_an_additional_branch('my_branch')
+      repository.clone!(mirror: true)
+      repository.commit_from_ref('my_branch').must_match /^[0-9a-f]{7}$/
+    end
+
+    it 'returns the commit of a named tag' do
+      create_repo_with_an_additional_branch('test_branch')
+      execute_on_remote_repo <<-SHELL
+        git checkout test_branch
+        echo "blah blah" >> bar.txt
+        git add bar
+        git commit -m "created bar.txt"
+        git tag -a annotated_tag -m "This is really worth tagging"
+        git checkout master
+      SHELL
+
+      repository.clone!(mirror: true)
+      sha = repository.commit_from_ref('annotated_tag', length: 40)
+      sha.must_match /^[0-9a-f]{40}$/
+      repository.commit_from_ref('test_branch', length: 40).must_equal(sha)
+    end
+
+    it 'prevents script insertion attacks' do
+      create_repo_without_tags
+      repository.clone!
+      repository.commit_from_ref('master ; rm foo', length: nil).must_be_nil
+      assert File.exists?(File.join(repository.repo_cache_dir, 'foo'))
+    end
   end
 
-  it 'returns an empty set of tags' do
-    create_repo_without_tags
-    repository.clone!(executor: TerminalExecutor.new(StringIO.new), mirror: true)
-    repository.tags.must_equal []
+  describe "#tag_from_ref" do
+    it 'returns nil when repo has no tags' do
+      create_repo_without_tags
+      repository.clone!
+      repository.tag_from_ref('master').must_be_nil
+    end
+
+    it 'returns the closest matching tag' do
+      create_repo_with_tags
+      execute_on_remote_repo <<-SHELL
+        echo update > foo
+        git commit -a -m 'untagged commit'
+      SHELL
+      repository.clone!
+      repository.tag_from_ref('master~').must_equal 'v1'
+      repository.tag_from_ref('master').must_match /^v1-1-g[0-9a-f]{7}$/
+    end
   end
 
-  it 'returns the branches of the repository' do
-    create_repo_with_an_additional_branch
-    repository.clone!(executor: TerminalExecutor.new(StringIO.new), mirror: true)
-    repository.branches.to_a.must_equal %w(master test_user/test_branch)
+  describe "#tags" do
+    it 'returns the tags repository' do
+      create_repo_with_tags
+      repository.clone!(mirror: true)
+      repository.tags.to_a.must_equal %w(v1 )
+    end
+
+    it 'returns an empty set of tags' do
+      create_repo_without_tags
+      repository.clone!(mirror: true)
+      repository.tags.must_equal []
+    end
+  end
+
+  describe "#branches" do
+    it 'returns the branches of the repository' do
+      create_repo_with_an_additional_branch
+      repository.clone!(mirror: true)
+      repository.branches.to_a.must_equal %w(master test_user/test_branch)
+    end
   end
 
   describe "#valid_url?" do
@@ -92,7 +165,7 @@ describe GitRepository do
     it 'creates a repository' do
       create_repo_with_an_additional_branch
       Dir.mktmpdir do |temp_dir|
-        assert repository.setup!(executor, temp_dir, 'test_user/test_branch')
+        assert repository.setup!(temp_dir, 'test_user/test_branch')
         Dir.chdir(temp_dir) { current_branch.must_equal('test_user/test_branch') }
       end
     end
@@ -100,8 +173,8 @@ describe GitRepository do
     it 'updates an existing repository to a branch' do
       create_repo_with_an_additional_branch
       Dir.mktmpdir do |temp_dir|
-        repository.send(:clone!, executor: executor, mirror: true)
-        assert repository.setup!(executor, temp_dir, 'test_user/test_branch')
+        repository.send(:clone!, mirror: true)
+        assert repository.setup!(temp_dir, 'test_user/test_branch')
         Dir.chdir(temp_dir) { current_branch.must_equal('test_user/test_branch') }
       end
     end
@@ -111,7 +184,7 @@ describe GitRepository do
     it 'removes a repository' do
       create_repo_without_tags
       Dir.mktmpdir do |temp_dir|
-        assert repository.setup!(executor, temp_dir, 'master')
+        assert repository.setup!(temp_dir, 'master')
         Dir.exist?(repository.repo_cache_dir).must_equal true
         repository.clean!
         Dir.exist?(repository.repo_cache_dir).must_equal false
@@ -121,61 +194,5 @@ describe GitRepository do
     it 'does not fail when repo is missing' do
       repository.clean!
     end
-  end
-
-  def execute_on_remote_repo(cmds)
-    `exec 2> /dev/null; cd #{repository_url}; #{cmds}`
-  end
-
-  def create_repo_with_tags
-    execute_on_remote_repo <<-SHELL
-      git init
-      git config user.email "test@example.com"
-      git config user.name "Test User"
-      echo monkey > foo
-      git add foo
-      git commit -m "initial commit"
-      git tag v1
-    SHELL
-  end
-
-  def create_repo_without_tags
-    execute_on_remote_repo <<-SHELL
-      git init
-      git config user.email "test@example.com"
-      git config user.name "Test User"
-      echo monkey > foo
-      git add foo
-      git commit -m "initial commit"
-    SHELL
-  end
-
-  def create_repo_with_an_additional_branch
-    execute_on_remote_repo <<-SHELL
-      git init
-      git config user.email "test@example.com"
-      git config user.name "Test User"
-      echo monkey > foo
-      git add foo
-      git commit -m "initial commit"
-
-      git checkout -b test_user/test_branch
-      echo monkey > foo2
-      git add foo2
-      git commit -m "branch commit"
-      git checkout master
-    SHELL
-  end
-
-  def current_branch
-    `git rev-parse --abbrev-ref HEAD`.strip
-  end
-
-  def number_of_commits
-    `git rev-list HEAD --count`.strip.to_i
-  end
-
-  def update_workspace
-    `git pull`.strip
   end
 end

@@ -2,8 +2,9 @@ require 'dogapi'
 require 'digest/md5'
 
 class DatadogNotification
-  def initialize(stage, deploy)
-    @stage, @deploy = stage, deploy
+  def initialize(deploy)
+    @deploy = deploy
+    @stage = @deploy.stage
   end
 
   def deliver
@@ -18,7 +19,7 @@ class DatadogNotification
       alert_type: status,
       source_type_name: "samson",
       date_happened: @deploy.updated_at,
-      tags: @stage.datadog_tags + ["deploy"]
+      tags: @stage.datadog_tags_as_array + ["deploy"]
     )
 
     client = Dogapi::Client.new(api_key, nil, "")

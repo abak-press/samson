@@ -6,14 +6,20 @@ Samson::Application.routes.draw do
       member { post :execute }
     end
 
+    resources :builds, only: [:show, :index, :new, :create, :edit, :update] do
+      member do
+        post :build_docker_image
+      end
+    end
+
     resources :deploys, only: [:index, :show, :destroy] do
       collection do
         get :active
+        get :active_count
       end
 
       member do
         post :buddy_check
-        post :pending_start
         get :changeset
       end
     end
@@ -41,15 +47,25 @@ Samson::Application.routes.draw do
     resources :webhooks, only: [:index, :create, :destroy]
     resource :commit_statuses, only: [:show]
     resources :references, only: [:index]
+
+    resources :users, only: [:index, :update]
+
+    resources :project_roles, only: [:create, :update]
+
+    member do
+      get :deploy_group_versions
+    end
   end
 
   resources :streams, only: [:show]
   resources :locks, only: [:create, :destroy]
 
-  resources :deploys, only: [] do
+  resources :deploys, only: [:index] do
     collection do
       get :active
+      get :active_count
       get :recent
+      get :search
     end
   end
 
@@ -59,6 +75,7 @@ Samson::Application.routes.draw do
 
   get '/auth/github/callback', to: 'sessions#github'
   get '/auth/google/callback', to: 'sessions#google'
+  post '/auth/ldap/callback', to: 'sessions#ldap'
   get '/auth/failure', to: 'sessions#failure'
 
   get '/jobs/enabled', to: 'jobs#enabled', as: :enabled_jobs
@@ -67,14 +84,23 @@ Samson::Application.routes.draw do
   get '/logout', to: 'sessions#destroy'
 
   resources :stars, only: [:create, :destroy]
-  resources :dashboards, only: [:show]
+  resources :dashboards, only: [:show] do
+    member do
+      get :deploy_groups
+    end
+  end
 
   namespace :admin do
-    resources :users, only: [:index, :update, :destroy]
+    resources :users, only: [:index, :show, :update, :destroy]
     resource :projects, only: [:show]
     resources :commands, except: [:show]
     resources :environments, except: [:show]
-    resources :deploy_groups, except: [:show]
+    resources :deploy_groups do
+      member do
+        get :deploy_all
+        post :deploy_all_now
+      end
+    end
   end
 
   namespace :integrations do
@@ -82,10 +108,17 @@ Samson::Application.routes.draw do
     post "/semaphore/:token" => "semaphore#create", as: :semaphore_deploy
     post "/tddium/:token" => "tddium#create", as: :tddium_deploy
     post "/jenkins/:token" => "jenkins#create", as: :jenkins_deploy
+    post "/buildkite/:token" => "buildkite#create", as: :buildkite_deploy
     post "/github/:token" => "github#create", as: :github_deploy
   end
 
   get '/ping', to: 'ping#show'
+
+  resources :access_requests, only: [:new, :create]
+
+  get '/project_roles', to: 'project_roles#index'
+
+  mount SseRailsEngine::Engine, at: '/streaming'
 
   root to: 'projects#index'
 end

@@ -1,8 +1,38 @@
 require 'coderay'
 
 module DeploysHelper
-  def deploy_active?
-    @deploy.active? && (JobExecution.find_by_id(@deploy.job_id) || JobExecution.enabled)
+  def deploy_output
+    output_hidden = false
+    output = ActiveSupport::SafeBuffer.new
+
+    if JobExecution.enabled
+      output << Samson::Hooks.render_views(:deploy_view, self, deploy: @deploy, project: @project)
+
+      if deploy_queued?
+        output_hidden = true
+        output << render('queued')
+      elsif @deploy.waiting_for_buddy?
+        output_hidden = true
+        output << render('buddy_check', deploy: @deploy)
+      end
+    elsif @deploy.pending?
+      output_hidden = true
+      output << render('queued')
+    end
+
+    output << render('shared/output', deployable: @deploy, job: @deploy.job, project: @project, hide: output_hidden)
+  end
+
+  def deploy_running?
+    @deploy.active? && JobExecution.active?(@deploy.job_id, key: @deploy.stage_id)
+  end
+
+  def deploy_queued?
+    @deploy.pending? && JobExecution.queued?(@deploy.job_id, key: @deploy.stage_id)
+  end
+
+  def newrelic_enabled_for_deploy?
+    NewRelicApi.api_key.present? && @deploy.stage.new_relic_applications.any?
   end
 
   def deploy_page_title
@@ -41,12 +71,8 @@ module DeploysHelper
     end
   end
 
-  def deploy_status_panel(deploy)
-    deploy_status_panel_common(deploy, BuddyCheck.enabled?)
-  end
-
   def buddy_check_button(project, deploy)
-    return nil unless deploy.waiting_for_buddy?
+    return unless deploy.waiting_for_buddy?
 
     button_class = ['btn']
 
@@ -61,21 +87,6 @@ module DeploysHelper
     link_to button_text, buddy_check_project_deploy_path(@project, @deploy), method: :post, class: button_class.join(' ')
   end
 
-  def duration_text(deploy)
-    seconds  = (deploy.updated_at - deploy.start_time).to_i
-
-    duration = ""
-
-    if seconds > 60
-      minutes = seconds / 60
-      seconds = seconds - minutes * 60
-
-      duration << "#{minutes} minute".pluralize(minutes)
-    end
-
-    duration << (seconds > 0 || duration.size == 0 ? " #{seconds} second".pluralize(seconds) : "")
-  end
-
   def syntax_highlight(code, language = :ruby)
     CodeRay.scan(code, language).html.html_safe
   end
@@ -86,35 +97,8 @@ module DeploysHelper
     end
   end
 
-  private
-
-    def deploy_status_panel_common(deploy, enabled, hash = { "cancelled" => "danger" } )
-      mapping = {
-        "succeeded" => "success",
-        "failed"    => "danger",
-        "errored"   => "warning",
-      }
-
-      mapping = mapping.merge(hash) if enabled
-
-      content, status = content_no_buddy_check(deploy)
-
-      content ||= h deploy.summary
-      status ||= mapping.fetch(deploy.status, "info")
-
-      content_tag :div, content.html_safe, class: "alert alert-#{status}"
-    end
-
-    def content_no_buddy_check(deploy)
-      if deploy.finished?
-        content = h "#{deploy.summary} "
-        content << deploy_time(deploy)
-        content << ", it took #{duration_text(deploy)}."
-      end
-    end
-
-    def deploy_time(deploy)
-      time = deploy.start_time
-      content_tag(:span, time.rfc822, data: { time: datetime_to_js_ms(time) }, class: "mouseover")
-    end
+  def stop_button(deploy: @deploy, **options)
+    return unless @project && deploy
+    link_to 'Stop', [@project, deploy], options.merge(method: :delete, class: options.fetch(:class, 'btn btn-danger btn-xl'))
+  end
 end

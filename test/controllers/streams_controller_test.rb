@@ -1,10 +1,14 @@
 require_relative '../test_helper'
 
 describe StreamsController do
+  include OutputBufferSupport
+
   let(:project) { projects(:test) }
   let(:stage) { stages(:test_staging) }
   let(:deployer) { users(:deployer) }
-  let(:job) { jobs(:succeeded_test) }
+  let(:job) { jobs(:running_test) }
+
+  after { kill_extra_threads } # SSE heartbeat never finishes
 
   as_a_deployer do
     describe "a GET to :show" do
@@ -14,14 +18,20 @@ describe StreamsController do
         fake_execution = JobExecution.new("foo", job)
         JobExecution.expects(:find_by_id).returns(fake_execution)
 
+        # make sure that the JobExecution object responds to the pid method
+        assert fake_execution.respond_to?(:pid)
+
         # Get the :show page to open the SSE stream
         get :show, id: job.id
+
+        response.status.must_equal(200)
+
+        wait_for_listeners(fake_execution.output)
 
         # Write some msgs to our fake TerminalExecutor stream
         fake_execution.output.write("Hello there!\n")
         # Close the stream to denote the job finishing, which will trigger sending the :finished SSE
         fake_execution.output.close
-        response.status.must_equal(200)
 
         # Collect the output from the ActiveController::Live::Buffer stream
         lines = []

@@ -1,5 +1,6 @@
 class Project < ActiveRecord::Base
   include Permalinkable
+  include Searchable
 
   has_soft_deletion default_scope: true
 
@@ -10,13 +11,19 @@ class Project < ActiveRecord::Base
   before_update :clean_old_repository, if: :repository_url_changed?
   after_soft_delete :clean_repository
 
+  has_many :builds
   has_many :releases
   has_many :stages, dependent: :destroy
   has_many :deploys, through: :stages
   has_many :jobs, -> { order(created_at: :desc) }
   has_many :webhooks
   has_many :commands
-  has_many :macros
+  has_many :macros, dependent: :destroy
+  has_many :user_project_roles
+  has_many :users, through: :user_project_roles
+
+  # For permission checks on callbacks. Currently used in private plugins.
+  attr_accessor :current_user
 
   accepts_nested_attributes_for :stages
 
@@ -31,13 +38,33 @@ class Project < ActiveRecord::Base
       alphabetical
   }
 
+  scope :where_user_is_admin, ->(user) {
+    joins(:user_project_roles).where(user_project_roles: {
+        user_id: user.id,
+        role_id: ProjectRole::ADMIN.id
+    })
+  }
+
+  scope :search, ->(name) { where("name like ?", "%#{name}%") }
+
   def repo_name
     name.parameterize('_')
   end
 
-  def last_released_with_commit?(commit)
+  def docker_repo
+    @docker_repo ||= begin
+      registry = Rails.application.config.samson.docker.registry
+      "#{registry}/#{permalink_base}"
+    end
+  end
+
+  def last_release_contains_commit?(commit)
     last_release = releases.order(:id).last
-    last_release && last_release.commit == commit
+    # status values documented here: http://stackoverflow.com/questions/23943855/github-api-to-compare-commits-response-status-is-diverged
+    last_release && %w(behind identical).include?(GITHUB.compare(github_repo, last_release.commit, commit).status)
+  rescue Octokit::Error => e
+    Airbrake.notify(e, parameters: { github_repo: github_repo, last_commit: last_release.commit, commit: commit })
+    false # Err on side of caution and cause a new release to be created.
   end
 
   def auto_release_stages
@@ -61,7 +88,7 @@ class Project < ActiveRecord::Base
   def github_repo
     # GitHub allows underscores, hyphens and dots in repo names
     # but only hyphens in user/organisation names (as well as alphanumeric).
-    repository_url.scan(/[:\/]([A-Za-z0-9-]+\/[\w.-]+)\.git$/).join
+    repository_url.scan(/[:\/]([A-Za-z0-9-]+\/[\w.-]+?)(?:\.git)?$/).join
   end
 
   def repository_directory
@@ -72,8 +99,8 @@ class Project < ActiveRecord::Base
     "//#{Rails.application.config.samson.github.web_url}/#{github_repo}"
   end
 
-  def webhook_stages_for_branch(branch)
-    webhooks.for_branch(branch).map(&:stage)
+  def webhook_stages_for(branch, service_type, service_name)
+    webhooks.for_source(service_type, service_name).for_branch(branch).map(&:stage)
   end
 
   def release_prior_to(release)
@@ -93,8 +120,8 @@ class Project < ActiveRecord::Base
     MultiLock.lock(id, holder, timeout: timeout, failed_to_lock: callback, &block)
   end
 
-  def last_deploy_by_group(before)
-    releases = deploys_by_group(before)
+  def last_deploy_by_group(before_time)
+    releases = deploys_by_group(before_time)
     releases.map { |group_id, deploys| [ group_id, deploys.sort_by(&:updated_at).last ] }.to_h
   end
 
@@ -102,7 +129,7 @@ class Project < ActiveRecord::Base
 
   def deploys_by_group(before)
     stages.each_with_object({}) do |stage, result|
-      if deploy = stage.deploys.successful.where("deploys.updated_at <= ?", before).first
+      if deploy = stage.deploys.successful.where(release: true).where("deploys.updated_at <= ?", before.to_s(:db)).first
         stage.deploy_groups.each do |deploy_group|
           result[deploy_group.id] ||= []
           result[deploy_group.id] << deploy
@@ -122,13 +149,13 @@ class Project < ActiveRecord::Base
   def clone_repository
     Thread.new do
       begin
-        output = StringIO.new
+        output = repository.executor.output
         with_lock(output: output, holder: 'Initial Repository Setup') do
-          is_cloned = repository.clone!(executor: TerminalExecutor.new(output), from: repository_url, mirror: true)
+          is_cloned = repository.clone!(from: repository_url, mirror: true)
           log.error("Could not clone git repository #{repository_url} for project #{name} - #{output.string}") unless is_cloned
         end
       rescue => e
-       alert_clone_error!(e)
+        alert_clone_error!(e)
       end
     end
   end
@@ -153,14 +180,12 @@ class Project < ActiveRecord::Base
   def alert_clone_error!(exception)
     message = "Could not clone git repository #{repository_url} for project #{name}"
     log.error("#{message} - #{exception.message}")
-    if defined?(Airbrake)
-      Airbrake.notify(exception,
-        error_message: message,
-        parameters: {
-          project_id: id
-        }
-      )
-    end
+    Airbrake.notify(exception,
+      error_message: message,
+      parameters: {
+        project_id: id
+      }
+    )
   end
 
   def valid_repository_url

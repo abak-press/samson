@@ -1,3 +1,5 @@
+<h1>Execute job on <%= @project.name %></h1>
+
 <%= form_for [@project, @job], html: { class: "form-horizontal" } do |form| %>
   <fieldset>
     <% if @job.errors.any? %>
@@ -59,7 +61,7 @@
   <div class="form-group">
     <div class="col-lg-offset-2 col-lg-10">
       <button type="submit" class="btn btn-primary">Execute!</button>
-      <%= link_to "cancel", project_jobs_path(@project), class: 'btn btn-default' %>
+      <%= link_to "Cancel", project_jobs_path(@project), class: 'btn btn-default' %>
     </div>
   </div>
 <% end %>

@@ -1,7 +1,8 @@
-//= require typeahead
+//= require typeahead.js.js
 //= require changesets
 
-var following = true;
+var following = true; // shared with stream.js
+
 $(function () {
   // Shows confirmation dropdown using Github comparison
   var changesetLoaded = false,
@@ -10,7 +11,10 @@ $(function () {
       $placeholderPanes = $container.find(".changeset-placeholder"),
       $form = $("#new_deploy"),
       $submit = $form.find('input[type=submit]'),
-      $reference = $("#deploy_reference");
+      $reference = $("#deploy_reference"),
+      $ref_problem_list = $("#ref-problem-list"),
+      $ref_status_label = $("#ref-problem-warning"),
+      $messages = $("#messages");
 
   $("#deploy-tabs a[data-type=github]").click(function (e) {
       e.preventDefault();
@@ -64,6 +68,7 @@ $(function () {
     engine.initialize();
 
     $reference.typeahead(null, {
+      display: 'value',
       source: engine.ttAdapter()
     });
   }
@@ -74,19 +79,44 @@ $(function () {
 
   // Shows commit status from Github as border color
   var timeout = null;
-  var tag_form_group = $reference.parent();
+  var $tag_form_group = $reference.parent();
+
+  function show_status_problems(status_list) {
+    $ref_status_label.removeClass("hidden");
+    $ref_problem_list.empty();
+    $.each(status_list, function(idx, status) {
+      if (status.state != "success") {
+        $ref_problem_list.append($("<li>").text(status.state + ": " + status.description));
+      }
+    });
+  }
 
   function check_status(ref) {
     $.ajax({
       url: $("#new_deploy").data("commit-status-url"),
       data: { ref: ref },
       success: function(data, status, xhr) {
-        if(data.status == "pending") {
-          tag_form_group.addClass("has-warning");
-        } else if(data.status == "success") {
-          tag_form_group.addClass("has-success");
-        } else if(data.status == "failure" || data.status == "error") {
-          tag_form_group.addClass("has-error");
+        switch(data.status) {
+          case "success":
+            $ref_status_label.addClass("hidden");
+            $tag_form_group.addClass("has-success");
+            break;
+          case "pending":
+            $ref_status_label.removeClass("hidden");
+            $tag_form_group.addClass("has-warning");
+            show_status_problems(data.status_list);
+            break;
+          case "failure":
+          case "error":
+            $ref_status_label.removeClass("hidden");
+            $tag_form_group.addClass("has-error");
+            show_status_problems(data.status_list);
+            break;
+          case null:
+            $ref_status_label.removeClass("hidden");
+            $tag_form_group.addClass("has-error");
+            show_status_problems([{"state": "Tag or SHA", description: "'" + ref + "' does not exist"}]);
+            break;
         }
       }
     });
@@ -102,7 +132,8 @@ $(function () {
   toggleConfirmed();
 
   $reference.keyup(function(e) {
-    tag_form_group.removeClass("has-success has-warning has-error");
+    $ref_status_label.addClass("hidden");
+    $tag_form_group.removeClass("has-success has-warning has-error");
 
     var ref = $(this).val();
 
@@ -119,31 +150,41 @@ $(function () {
     }
   });
 
+  function showDeployConfirmationTab($this) {
+    var $navTabs = $this.find("#deploy-confirmation .nav-tabs"),
+        hasActivePane = $this.find(".tab-pane.active").length === 0;
+
+    // We need to switch to another tab and then switch back in order for
+    // the plugin to detect that the DOM node has been replaced.
+    $navTabs.find("a").tab("show");
+
+    // If there is no active pane defined, show first pane
+    if (hasActivePane) {
+      $navTabs.find("a:first").tab("show");
+    }
+  }
+
   $form.submit(function(event) {
-    var $selected_stage = $("#deploy_stage_id option:selected"),
-        $this = $(this),
-        $submit = $this.find('button[type=submit]');
+    var $this = $(this);
 
     if(!confirmed && $this.data('confirmation')) {
       toggleConfirmed();
       $("#deploy-confirmation").show();
-      $("#deploy-confirmation .nav-tabs a:first").tab("show");
+
+      showDeployConfirmationTab($this);
+
       $container.empty();
       $container.append($placeholderPanes);
-
 
       $.ajax({
         method: "POST",
         url: $this.data("confirm-url"),
         data: $this.serialize(),
-        success: function(data, status, xhr) {
+        success: function(data) {
           $placeholderPanes.detach();
           $container.append(data);
 
-          // We need to switch to another tab and then switch back in order for
-          // the plugin to detect that the DOM node has been replaced.
-          $('#deploy-confirmation .nav-tabs a').tab("show");
-          $('#deploy-confirmation .nav-tabs a:first').tab("show");
+          showDeployConfirmationTab($this);
         }
       });
 
@@ -152,15 +193,14 @@ $(function () {
   });
 
   function shrinkOutput() {
-    $("#messages").css("max-height", 550);
+    $messages.css("max-height", 550);
   }
 
-  $("#output-follow").click(function(event) {
+  $("#output-follow").click(function() {
     following = true;
 
     shrinkOutput();
 
-    var $messages = $("#messages");
     $messages.scrollTop($messages.prop("scrollHeight"));
 
     $("#output-options > button, #output-grow-toggle").removeClass("active");
@@ -168,10 +208,10 @@ $(function () {
   });
 
   function growOutput() {
-    $("#messages").css("max-height", "none");
+    $messages.css("max-height", "none");
   }
 
-  $("#output-grow-toggle").click(function(event) {
+  $("#output-grow-toggle").click(function() {
     var $self = $(this);
 
     if($self.hasClass("active")) {
@@ -183,7 +223,7 @@ $(function () {
     }
   });
 
-  $("#output-grow").click(function(event) {
+  $("#output-grow").click(function() {
     growOutput();
 
     $("#output-options > button").removeClass("active");
@@ -191,7 +231,7 @@ $(function () {
     $("#output-grow-toggle").addClass("active");
   });
 
-  $("#output-steady").click(function(event) {
+  $("#output-steady").click(function() {
     following = false;
 
     shrinkOutput();
@@ -201,7 +241,7 @@ $(function () {
   });
 
   // If there are messages being streamed, then show the output and hide buddy check
-  $('#messages').bind('contentchanged', function(){
+  $messages.bind('contentchanged', function() {
     var $output = $('#output');
     if ($output.find('.output').hasClass("hidden") ){
       $output.find('.output').removeClass('hidden');
@@ -209,8 +249,32 @@ $(function () {
     }
   });
 
+  // when user scrolls all the way down, start following
+  // when user scrolls up, stop following since it would cause jumping
+  // (adds 30 px wiggle room since the math does not quiet add up)
+  $messages.scroll(function() {
+    var position = $messages.prop("scrollHeight") - $messages.scrollTop() - $messages.height() - 30;
+    if(position > 0 && following) {
+      $("#output-steady").click();
+    } else if (position < 0 && !following) {
+      $("#output-follow").click();
+    }
+  });
 });
 
 function toggleOutputToolbar() {
   $('.only-active, .only-finished').toggle();
+}
+
+function waitUntilEnabled(path) {
+  $.ajax({
+    url: path,
+    success: function(data, status, xhr) {
+      if(xhr.status == 204) {
+        window.location.reload();
+      }
+    }
+  });
+
+  setTimeout(function() { waitUntilEnabled(path); }, 5000);
 }

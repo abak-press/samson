@@ -1,8 +1,8 @@
 <h1>
   <%= @project.name %>
-  <div class="pull-right">
 
-    <% if current_user.is_deployer? %>
+  <div class="pull-right">
+    <% if is_user_deployer_for_project? %>
       <% unless @deploy.succeeded? || @deploy.active? %>
         <%= link_to "Redeploy", project_stage_deploys_path(@project, @deploy.stage, deploy: { reference: @deploy.reference }), method: :post, class: "btn btn-danger" %>
       <% end %>
@@ -14,8 +14,19 @@
       <% end %>
     <% end %>
 
-    <%= link_to "Back", project_path(@project), class: "btn btn-default" %>
+    <%= link_to "Back", @project, class: "btn btn-default" %>
   </div>
 </h1>
 
-<%= deploy_status_panel @deploy %>
+<% if @deploy.finished? || deploy_running? || JobExecution.enabled %>
+  <%= status_panel @deploy %>
+  <%= Samson::Hooks.render_views(:deploys_header, self) %>
+<% else %>
+  <div class="alert alert-info">
+    Samson is currently restarting, your deploy has been queued and will be resumed shortly.
+  </div>
+
+  <%= javascript_tag do %>
+    waitUntilEnabled("<%= enabled_jobs_path %>");
+  <% end %>
+<% end %>

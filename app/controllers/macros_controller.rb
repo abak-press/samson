@@ -1,8 +1,9 @@
 class MacrosController < ApplicationController
-  before_action :authorize_deployer!
-  before_action :authorize_admin!, only: [:new, :create, :edit, :update, :destroy]
+  include ProjectLevelAuthorization
 
-  before_action :find_project
+  before_action :authorize_project_deployer!
+  before_action :authorize_project_admin!, only: [:new, :create, :edit, :update]
+  before_action :authorize_super_admin!, only: [:destroy]
   before_action :find_macro, only: [:edit, :update, :execute, :destroy]
 
   def index
@@ -39,20 +40,16 @@ class MacrosController < ApplicationController
     job = macro_service.execute!(@macro)
 
     if job.persisted?
-      JobExecution.start_job(job.commit, job)
-      redirect_to project_job_path(@project, job)
+      JobExecution.start_job(JobExecution.new(job.commit, job))
+      redirect_to [@project, job]
     else
       redirect_to project_macros_path(@project)
     end
   end
 
   def destroy
-    if @macro.user == current_user || current_user.is_super_admin?
-      @macro.soft_delete!
-      redirect_to project_macros_path(@project)
-    else
-      head :unauthorized
-    end
+    @macro.soft_delete!
+    redirect_to project_macros_path(@project)
   end
 
   private
@@ -66,10 +63,6 @@ class MacrosController < ApplicationController
 
   def command_params
     params.require(:commands).permit(ids: [])
-  end
-
-  def find_project
-    @project = Project.find_by_param!(params[:project_id])
   end
 
   def find_macro

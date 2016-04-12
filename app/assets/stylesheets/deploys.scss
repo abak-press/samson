@@ -80,6 +80,12 @@
   margin-bottom: 25px;
 }
 
+.deploy-csv {
+  float: right;
+  clear: both;
+  margin-bottom: 1em;
+}
+
 #output-toolbar {
   margin-bottom: 10px;
 }
@@ -105,4 +111,27 @@ td.status {
 
 .deployment-alert-popover {
   max-width: 340px;
+}
+
+@-webkit-keyframes pulsate
+{
+  0%   { background: $samsonDark; color: $info; }
+  50%  { background: $info; color: $samsonDark; }
+  100% { background: $samsonDark; color: $info; }
+}
+
+@keyframes pulsate
+{
+  0%   { background: $samsonDark; color: $info; }
+  50%  { background: $info; color: $samsonDark; }
+  100% { background: $samsonDark; color: $info; }
+}
+
+.badge-deploys {
+  -webkit-animation: pulsate 6s infinite;
+  animation: pulsate 6s infinite;
+}
+
+#ref-problem-list {
+  margin-top: 10px;
 }

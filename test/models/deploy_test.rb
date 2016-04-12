@@ -119,7 +119,7 @@ describe Deploy do
     end
   end
 
-  describe "#validate_stage_is_deployable" do
+  describe "#validate_stage_is_unlocked" do
     def deploy!
       create_deploy!(job_attributes: { user: user })
     end
@@ -136,20 +136,51 @@ describe Deploy do
       assert_raise(ActiveRecord::RecordInvalid) { deploy! }
     end
 
-    it "cannot deploy when already deploying" do
-      create_deploy!(job_attributes: { user: user, status: "running" })
-      assert_raise(ActiveRecord::RecordInvalid) { deploy! }
-    end
-
     it "can update a deploy while something else is deployed" do
       create_deploy!(job_attributes: { user: user, status: "running" })
       deploys(:succeeded_test).update_attributes!(buddy_id: 123)
     end
   end
 
+  describe "#validate_stage_uses_deploy_groups_properly" do
+    def deploy!
+      create_deploy!(job_attributes: { user: user })
+    end
+
+    before do
+      stage.commands.first.update_column(:command, "echo $DEPLOY_GROUPS")
+      DeployGroup.stubs(enabled?: true)
+    end
+
+    it "is valid when using $DEPLOY_GROUPS and having deploy groups selected" do
+      deploy!
+    end
+
+    describe "when not selecting deploy groups" do
+      before { stage.deploy_groups.clear }
+
+      it "is invalid" do
+        e = assert_raise(ActiveRecord::RecordInvalid) { deploy! }
+        e.message.must_equal "Validation failed: Stage contains at least one command using the $DEPLOY_GROUPS environment variable, but there are no Deploy Groups associated with this stage."
+      end
+
+      it "valid when not using $DEPLOY_GROUPS" do
+        DeployGroup.unstub(:enabled?)
+        deploy!
+      end
+    end
+  end
+
   describe "#cache_key" do
     it "includes self and commit" do
       deploys(:succeeded_test).cache_key.must_equal ["deploys/178003093-20140102201000000000000", "staging"]
+    end
+  end
+
+  describe "trim_reference" do
+    it "trims the Git reference" do
+      deploy = create_deploy!({reference: " master "})
+      deploy.reference.must_equal "master"
     end
   end
 
@@ -161,9 +192,7 @@ describe Deploy do
 
     deploy_stage = attrs.delete(:stage) || stage
 
-    deploy = deploy_stage.deploys.create!(default_attrs.merge(attrs))
-    deploy_stage.remove_instance_variable(:@current_deploy) # pretend we are in a new request after creating a deploy
-    deploy
+    deploy_stage.deploys.create!(default_attrs.merge(attrs))
   end
 
   def create_job!(attrs = {})

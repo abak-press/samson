@@ -9,17 +9,20 @@ class StreamsController < ApplicationController
   def show
     response.headers['Content-Type'] = 'text/event-stream'
     response.headers['Cache-Control'] = 'no-cache'
+    response.headers['Access-Control-Allow-Origin'] = Rails.application.config.samson.uri.to_s
+    response.headers['Access-Control-Allow-Credentials'] = true
 
     @job = Job.find(params[:id])
     @execution = JobExecution.find_by_id(@job.id)
 
-    streamer = EventStreamer.new(response.stream, &method(:event_handler))
-
     return response.stream.close unless @job.active? && @execution
 
     @execution.viewers.push(current_user)
+
     ActiveRecord::Base.clear_active_connections!
-    streamer.start(@execution.output)
+
+    EventStreamer.new(response.stream, &method(:event_handler)).
+      start(@execution.output)
   end
 
   private
@@ -37,9 +40,7 @@ class StreamsController < ApplicationController
   end
 
   def status_response(event)
-    if @execution && event == :finished
-      @execution.viewers.delete(current_user)
-    end
+    @execution.viewers.delete(current_user) if event == :finished
 
     # Need to reload data, as background thread updated the records on a separate DB connection,
     # and .reload() doesn't bypass QueryCache'ing.

@@ -1,5 +1,7 @@
 class NewRelicController < ApplicationController
-  before_action :authorize_deployer!
+  include ProjectLevelAuthorization
+
+  before_action :authorize_project_deployer!
   before_action :ensure_new_reclic_api_key
 
   def show
@@ -14,7 +16,7 @@ class NewRelicController < ApplicationController
   end
 
   def stage
-    Stage.where(project_id: Project.find_by_param!(params[:project_id])).find(params[:id])
+    Stage.where(project_id: @project).find(params[:id])
   end
 
   def ensure_new_reclic_api_key

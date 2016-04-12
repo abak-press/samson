@@ -3,6 +3,7 @@ require 'github/markdown'
 
 module ApplicationHelper
   include Ansible
+  include DateTimeHelper
 
   cattr_reader(:github_status_cache_key) { 'github-status-ok' }
 
@@ -18,7 +19,7 @@ module ApplicationHelper
   def deploy_link(project, stage)
     if deploy = stage.current_deploy
       link_to "Deploying #{deploy.short_reference}...",
-        project_deploy_path(project, deploy),
+        [project, deploy],
         class: "btn btn-primary"
     elsif stage.locked_for?(current_user)
       content_tag :a, "Locked", class: "btn btn-primary disabled", disabled: true
@@ -45,14 +46,14 @@ module ApplicationHelper
     render '/locks/lock', lock: global_lock if global_lock
   end
 
-  def datetime_to_js_ms(utc_string)
-    utc_string.to_i * 1000
+  def relative_time(time)
+    content_tag(:span, time.rfc822, data: { time: datetime_to_js_ms(time) }, class: "mouseover")
   end
 
   def sortable(column, title = nil)
     title ||= column.titleize
-    direction = (column == sort_column && sort_direction == "asc") ? "desc" : "asc"
-    link_to title, :sort => column, :direction => direction
+    direction = (column == params[:sort] && params[:direction] == "asc") ? "desc" : "asc"
+    link_to title, sort: column, direction: direction
   end
 
   def github_ok?
@@ -74,18 +75,25 @@ module ApplicationHelper
     items = items.map do |item|
       case item
       when Project then [item.name, project_path(item)]
+      when Environment then [item.name, dashboard_path(item)]
+      when DeployGroup then [item.name, deploy_group_path(item)]
       when Stage then
         name = item.name
         name = (item.lock.warning? ? warning_icon : lock_icon) + " " + name if item.lock
-        [name, project_stage_path(@project, item)]
+        [name, project_stage_path(item.project, item)]
       when Macro then
-        [item.name, project_macro_path(@project, item)]
+        [item.name, project_macro_path(item.project, item)]
       when String then [item, nil]
+      when Build then [item.nice_name, project_build_path(item)]
+      when Array then item
       else
         raise "Unsupported breadcrumb for #{item}"
       end
     end
+    manual_breadcrumb(items)
+  end
 
+  def manual_breadcrumb(items)
     items.unshift ["Home", root_path]
     items.last << true # mark last as active
 
@@ -107,5 +115,19 @@ module ApplicationHelper
 
   def icon_tag(type)
     content_tag :i, '', class: "glyphicon glyphicon-#{type}"
+  end
+
+  def link_to_delete(path, body = 'Delete', options={})
+    link_to body, path, options.merge({ method: :delete, data: { confirm: "Are you sure?" } })
+  end
+
+  def link_to_delete_button(path)
+    link_to_delete(path, icon_tag('remove') + ' Delete', class: 'btn btn-danger')
+  end
+
+  # render collections without making brakeman trigger a dynamic render alert
+  # like `render collection` does
+  def static_render(collection)
+    render partial: collection.first.to_partial_path, collection: collection if collection.any?
   end
 end

@@ -3,22 +3,21 @@ cache:
   bundler: true
   directories:
     - node_modules
-rvm: 2.1.5
 sudo: false
 services:
   - memcached
 branches:
-  only: [master]
+  only: master
 env:
   matrix:
-    - DB=sqlite BUNDLE_WITHOUT=mysql2:postgresql
-    - DB=mysql BUNDLE_WITHOUT=sqlite:postgresql
-    - DB=postgresql BUNDLE_WITHOUT=sqlite:mysql2
-
+    - TASK='test:prepare_js test:js'
+    - TASK=assets:precompile
+    - TASK=brakeman
+    - DATABASE_URL=mysql2://travis@127.0.0.1/samson_test USE_UTF8MB4=1 TASK='db:create default'
+    - DATABASE_URL=postgresql://postgres@127.0.0.1/samson_test TASK='db:create default'
+    - DATABASE_URL=sqlite3://null$PWD/db/test.sqlite3 TASK='db:create default'
+script: bundle exec rake $TASK
 before_script:
-  - cp config/database.travis.yml config/database.yml
-  - bundle exec rake db:create
-  - npm install
-script:
-  - npm test
-  - bundle exec rake
+  - mysql -u root -e 'set GLOBAL innodb_large_prefix = true'
+  - mysql -u root -e 'set GLOBAL innodb_file_per_table = true'
+  - mysql -u root -e 'set GLOBAL innodb_file_format = "barracuda"'

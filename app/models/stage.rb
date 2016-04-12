@@ -1,7 +1,8 @@
 class Stage < ActiveRecord::Base
   include Permalinkable
+  include HasCommands
 
-  has_soft_deletion default_scope: true
+  has_soft_deletion default_scope: true unless self < SoftDeletion::Core
 
   belongs_to :project, touch: true
 
@@ -11,32 +12,32 @@ class Stage < ActiveRecord::Base
 
   has_one :lock
 
-  has_many :stage_commands, autosave: true
-  has_many :commands,
-    -> { order('stage_commands.position ASC') },
-    through: :stage_commands, auto_include: false
+  has_many :command_associations, autosave: true, class_name: 'StageCommand', dependent: :destroy
+  has_many :commands, -> { order('stage_commands.position ASC') },
+    through: :command_associations, auto_include: false
 
-  has_and_belongs_to_many :deploy_groups
+  has_many :deploy_groups_stages
+  has_many :deploy_groups, through: :deploy_groups_stages
 
   default_scope { order(:order) }
 
   validates :name, presence: true, uniqueness: { scope: [:project, :deleted_at] }
+  validate :validate_bypass_used_correctly
 
   accepts_nested_attributes_for :new_relic_applications, allow_destroy: true, reject_if: :no_newrelic_name?
 
-  attr_writer :command
-  before_save :build_new_project_command
+  before_create :ensure_ordering
 
-  def self.reorder(new_order)
+  def self.reset_order(new_order)
     transaction do
       new_order.each.with_index { |stage_id, index| Stage.update stage_id.to_i, order: index.to_i }
     end
   end
 
   def self.build_clone(old_stage)
-    new(old_stage.attributes).tap do |new_stage|
+    new(old_stage.attributes.except("id")).tap do |new_stage|
       Samson::Hooks.fire(:stage_clone, old_stage, new_stage)
-      new_stage.new_relic_applications.build(old_stage.new_relic_applications.map(&:attributes))
+      new_stage.new_relic_applications.build(old_stage.new_relic_applications.map { |app| app.attributes.except("id", "updated_at", "created_at") })
       new_stage.command_ids = old_stage.command_ids
     end
   end
@@ -94,11 +95,8 @@ class Stage < ActiveRecord::Base
     confirm
   end
 
-  def create_deploy(options = {})
-    user = options.fetch(:user)
-    reference = options.fetch(:reference)
-
-    deploys.create(reference: reference) do |deploy|
+  def create_deploy(user, attributes = {})
+    deploys.create(attributes.merge(release: !no_code_deployed)) do |deploy|
       deploy.build_job(project: project, user: user, command: command)
     end
   end
@@ -121,32 +119,16 @@ class Stage < ActiveRecord::Base
     notify_email_address.present?
   end
 
-  def command
-    commands.map(&:command).join("\n")
+  def global_name
+    "#{name} - #{project.name}"
   end
 
-  def command_ids=(new_command_ids)
-    super.tap do
-      reorder_commands(new_command_ids.reject(&:blank?).map(&:to_i))
-    end
-  end
-
-  def all_commands
-    command_scope = project ? Command.for_project(project) : Command.global
-
-    if command_ids.any?
-      command_scope = command_scope.where(['id NOT in (?)', command_ids])
-    end
-
-    commands + command_scope
-  end
-
-  def datadog_tags
-    super.to_s.split(";").map(&:strip)
+  def datadog_tags_as_array
+    datadog_tags.to_s.split(";").map(&:strip)
   end
 
   def send_datadog_notifications?
-    datadog_tags.any?
+    datadog_tags_as_array.any?
   end
 
   def send_github_notifications?
@@ -154,11 +136,15 @@ class Stage < ActiveRecord::Base
   end
 
   def production?
-    if ENV['DEPLOY_GROUP_FEATURE']
+    if DeployGroup.enabled?
       deploy_groups.empty? ? super : deploy_groups.any? { |deploy_group| deploy_group.environment.is_production? }
     else
       super
     end
+  end
+
+  def deploy_requires_approval?
+    BuddyCheck.enabled? && !no_code_deployed? && production?
   end
 
   def automated_failure_emails(deploy)
@@ -188,24 +174,6 @@ class Stage < ActiveRecord::Base
 
   private
 
-  def build_new_project_command
-    return unless @command.present?
-
-    new_command = project.commands.build(command: @command)
-    stage_commands.build(command: new_command).tap do
-      reorder_commands
-    end
-  end
-
-  def reorder_commands(command_ids = self.command_ids)
-    stage_commands.each do |stage_command|
-      pos = command_ids.index(stage_command.command_id) ||
-        stage_commands.length
-
-      stage_command.position = pos
-    end
-  end
-
   def no_newrelic_name?(newrelic_attrs)
     newrelic_attrs['name'].blank?
   end
@@ -217,6 +185,15 @@ class Stage < ActiveRecord::Base
   def permalink_scope
     Stage.unscoped.where(project_id: project_id)
   end
-end
 
-Samson::Hooks.fire(:stage_defined)
+  def ensure_ordering
+    return unless project
+    self.order = project.stages.maximum(:order).to_i + 1
+  end
+
+  def validate_bypass_used_correctly
+    if no_code_deployed? && !production?
+      errors.add(:no_code_deployed, 'makes no sense when set but not being in production')
+    end
+  end
+end

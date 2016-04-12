@@ -39,20 +39,15 @@ class EventStreamer
     # Heartbeat thread until puma/puma#389 is solved
     start_heartbeat!
 
-    emit_event('started', @handler.call(:started, ''))
     @scanner = TerminalOutputScanner.new(output)
     @scanner.each {|event, data| emit_event(event, @handler.call(event, data)) }
-  rescue IOError
+  rescue IOError, ActionController::Live::ClientDisconnected
     # Raised on stream close
   ensure
-    finished
+    finish
   end
 
-  def finished
-    emit_event('finished', @handler.call(:finished, ''))
-  rescue IOError
-    # Raised on stream close
-  ensure
+  def finish
     ActiveRecord::Base.clear_active_connections!
 
     # Hackity-hack: clear out the buffer since
@@ -80,8 +75,8 @@ class EventStreamer
           @stream.write("data: \n\n")
           sleep(5) # Timeout of 5 seconds
         end
-      rescue IOError
-        finished
+      rescue IOError, ActionController::Live::ClientDisconnected
+        finish
       end
     end
   end

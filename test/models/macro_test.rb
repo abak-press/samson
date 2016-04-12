@@ -4,47 +4,33 @@ describe Macro do
   subject { macros(:test) }
 
   describe '#command' do
-    describe 'adding + sorting a command' do
-      before do
-        command = Command.create!(command: 'test')
+    it 'joins all commands based on position' do
+      command = Command.create!(command: 'test')
 
-        subject.command_ids = [command.id, commands(:echo).id]
-        subject.save!
-        subject.reload
-      end
+      subject.command_ids = [command.id, commands(:echo).id]
+      subject.save!
+      subject.reload
 
-      it 'joins all commands based on position' do
-        subject.command.must_equal("test\n#{commands(:echo).command}\nseq 1 5")
-      end
+      subject.command.must_equal("test\n#{commands(:echo).command}")
     end
 
-    describe 'no commands' do
-      before { subject.commands.clear }
-
-      it 'is only the macro command' do
-        subject.command.must_equal('seq 1 5')
-      end
+    it "is empty without commands" do
+      subject.command_associations.clear
+      subject.command.must_equal('')
     end
   end
 
-  describe '#all_commands' do
-    describe 'with commands' do
-      before do
-        Command.create!(command: 'test')
-      end
-
-      it 'includes all commands, sorted' do
-        subject.all_commands.must_equal(subject.commands + Command.global)
-      end
+  describe "#command=" do
+    it "adds a new comand" do
+      subject.command = "HELLOOOO"
+      subject.save!
+      subject.reload.commands.map(&:command).must_equal ["echo hello", "HELLOOOO"]
     end
 
-    describe 'no commands' do
-      let(:project) { projects(:test) }
-      subject { project.macros.build }
-
-      it 'includes all commands' do
-        subject.all_commands.must_equal(Command.for_project(project))
-      end
+    it "does not add a empty command" do
+      subject.command = "   "
+      subject.save!
+      subject.reload.commands.map(&:command).must_equal ["echo hello"]
     end
   end
 end
