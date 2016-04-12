@@ -1,114 +1,131 @@
 class DeployService
-  attr_reader :project, :user
+  include ::NewRelic::Agent::MethodTracer
+  attr_reader :user
 
-  def initialize(project, user)
-    @project, @user = project, user
+  def initialize(user)
+    @user = user
   end
 
-  def deploy!(stage, reference)
-    deploy = stage.create_deploy(reference: reference, user: user)
+  def deploy!(stage, attributes)
+    deploy = stage.create_deploy(user, attributes)
 
-    if deploy.persisted? && (auto_confirm?(stage) || release_approved?(deploy))
-      confirm_deploy!(deploy, stage, reference, deploy.buddy)
+    if deploy.persisted?
+      send_sse_deploy_update('new', deploy)
+
+      if !deploy.waiting_for_buddy? || release_approved?(deploy)
+        confirm_deploy!(deploy)
+      end
     end
 
     deploy
   end
 
-  def confirm_deploy!(deploy, stage, reference, buddy = nil)
-    send_before_notifications(stage, deploy, buddy)
+  def confirm_deploy!(deploy)
+    send_before_notifications(deploy)
 
-    job_execution = JobExecution.start_job(reference, deploy.job)
+    stage = deploy.stage
 
-    job_execution.subscribe do
-      send_after_notifications(stage, deploy)
+    job_execution = JobExecution.new(deploy.reference, deploy.job, construct_env(stage))
+    job_execution.on_complete do
+      send_after_notifications(deploy)
     end
+
+    JobExecution.start_job(job_execution, key: stage.id)
+
+    send_sse_deploy_update('start', deploy)
+  end
+
+  def stop!(deploy)
+    deploy.stop!
   end
 
   private
 
-  def auto_confirm?(stage)
-    !BuddyCheck.enabled? || !stage.production?
+  def construct_env(stage)
+    { STAGE: stage.permalink }.tap do |env|
+      group_names = stage.deploy_groups.pluck(:env_value).sort.join(" ")
+      env[:DEPLOY_GROUPS] = group_names if group_names.present?
+    end
   end
 
   def latest_approved_deploy(reference, project)
-    deploy = nil
-    Deploy.where(reference: reference).where(' buddy_id is NOT NULL AND started_at > ?', BuddyCheck.period.hours.ago)
+    Deploy.where(reference: reference).where('buddy_id is NOT NULL AND started_at > ?', BuddyCheck.grace_period.ago)
       .includes(:stage)
-      .where(stages: {project_id: project, production: true})
-      .each do |d|
-        next if bypassed?(d.stage, d, d.buddy)
-        deploy = d
-        break
-      end
-      deploy
+      .where(stages: {project_id: project})
+      .detect { |d| d.production? && !d.bypassed_approval? }
   end
 
   def release_approved?(deploy)
-    last_d = latest_approved_deploy(deploy.reference, deploy.stage.project)
+    last_deploy = latest_approved_deploy(deploy.reference, deploy.stage.project)
 
-    return false if !last_d
+    return false unless last_deploy
 
-    deploy.buddy = (last_d.buddy == @user ? last_d.job.user : last_d.buddy)
-    deploy.update_attributes!({started_at: Time.now, buddy_id: deploy.buddy.id})
+    deploy.buddy = (last_deploy.buddy == @user ? last_deploy.job.user : last_deploy.buddy)
+    deploy.started_at = Time.now
+    deploy.save!
 
-    return true
+    true
   end
 
-  def send_before_notifications(stage, deploy, buddy)
-    Samson::Hooks.fire(:before_deploy, stage, deploy, buddy)
+  def send_before_notifications(deploy)
+    Samson::Hooks.fire(:before_deploy, deploy, deploy.buddy)
 
-    if bypassed?(stage, deploy, buddy)
-      DeployMailer.bypass_email(stage, deploy, user).deliver_now
+    if deploy.bypassed_approval?
+      DeployMailer.bypass_email(deploy, user).deliver_now
     end
 
-    create_github_deployment(stage, deploy)
+    create_github_deployment(deploy)
   end
+  add_method_tracer :send_before_notifications
 
-  def bypassed?(stage, deploy, buddy)
-    !auto_confirm?(stage) && buddy == deploy.user
+  def send_after_notifications(deploy)
+    Samson::Hooks.fire(:after_deploy, deploy, deploy.buddy)
+    send_sse_deploy_update('finish', deploy)
+    send_deploy_email(deploy)
+    send_failed_deploy_email(deploy)
+    send_datadog_notification(deploy)
+    send_github_notification(deploy)
+    update_github_deployment_status(deploy)
   end
+  add_method_tracer :send_after_notifications
 
-  def send_after_notifications(stage, deploy)
-    Samson::Hooks.fire(:after_deploy, stage, deploy, deploy.buddy)
-    send_deploy_email(stage, deploy)
-    send_failed_deploy_email(stage, deploy)
-    send_datadog_notification(stage, deploy)
-    send_github_notification(stage, deploy)
-    update_github_deployment_status(stage, deploy)
-  end
-
-  def send_deploy_email(stage, deploy)
-    return unless stage.send_email_notifications?
-    DeployMailer.deploy_email(stage, deploy).deliver_now
-  end
-
-  def send_failed_deploy_email(stage, deploy)
-    return unless emails = stage.automated_failure_emails(deploy)
-    DeployMailer.deploy_failed_email(stage, deploy, emails).deliver_now
-  end
-
-  def send_datadog_notification(stage, deploy)
-    if stage.send_datadog_notifications?
-      DatadogNotification.new(stage, deploy).deliver
+  def send_deploy_email(deploy)
+    if deploy.stage.send_email_notifications?
+      DeployMailer.deploy_email(deploy).deliver_now
     end
   end
 
-  def send_github_notification(stage, deploy)
-    if stage.send_github_notifications? && deploy.status == "succeeded"
-      GithubNotification.new(stage, deploy).deliver
+  def send_failed_deploy_email(deploy)
+    if emails = deploy.stage.automated_failure_emails(deploy)
+      DeployMailer.deploy_failed_email(deploy, emails).deliver_now
     end
   end
 
-  def create_github_deployment(stage, deploy)
-    if stage.use_github_deployment_api?
-      @deployment = GithubDeployment.new(stage, deploy).create_github_deployment
+  def send_datadog_notification(deploy)
+    if deploy.stage.send_datadog_notifications?
+      DatadogNotification.new(deploy).deliver
     end
   end
 
-  def update_github_deployment_status(stage, deploy)
-    if stage.use_github_deployment_api?
-      GithubDeployment.new(stage, deploy).update_github_deployment_status(@deployment)
+  def send_github_notification(deploy)
+    if deploy.stage.send_github_notifications? && deploy.status == "succeeded"
+      GithubNotification.new(deploy).deliver
     end
+  end
+
+  def create_github_deployment(deploy)
+    if deploy.stage.use_github_deployment_api?
+      @deployment = GithubDeployment.new(deploy).create_github_deployment
+    end
+  end
+
+  def update_github_deployment_status(deploy)
+    if deploy.stage.use_github_deployment_api?
+      GithubDeployment.new(deploy).update_github_deployment_status(@deployment)
+    end
+  end
+
+  def send_sse_deploy_update(type, deploy)
+    SseRailsEngine.send_event('deploys', { type: type, deploy: DeploySerializer.new(deploy, root: nil) })
   end
 end

@@ -4,11 +4,19 @@ class Job < ActiveRecord::Base
 
   has_one :deploy
 
+  # Used by status_panel
+  alias_attribute :start_time, :created_at
+
   after_update { deploy.touch if deploy }
 
   validate :validate_globally_unlocked
 
   ACTIVE_STATUSES = %w[pending running cancelling].freeze
+  VALID_STATUSES = ACTIVE_STATUSES + %w[failed errored succeeded cancelled].freeze
+
+  def self.valid_status?(status)
+    VALID_STATUSES.include?(status)
+  end
 
   def self.non_deploy
     includes(:deploy).where(deploys: { id: nil })
@@ -26,6 +34,11 @@ class Job < ActiveRecord::Base
     "#{user.name} #{summary_action} against #{short_reference}"
   end
 
+  def summary_for_process
+    t = (Time.now.to_i - start_time.to_i)
+    "ProcessID: #{pid} Running: #{t} seconds"
+  end
+
   def user
     super || NullUser.new(user_id)
   end
@@ -34,14 +47,21 @@ class Job < ActiveRecord::Base
     self.user == user
   end
 
+  def can_be_stopped_by?(user)
+    started_by?(user) || user.is_admin? || user.is_admin_for?(project)
+  end
+
   def commands
     command.split(/\r?\n|\r/)
   end
 
   def stop!
-    status!("cancelling")
-    execution.try(:stop!)
-    status!("cancelled")
+    if execution
+      cancelling!
+      execution.stop!
+    else
+      cancelled!
+    end
   end
 
   %w{pending running succeeded cancelling cancelled failed errored}.each do |status|
@@ -66,12 +86,20 @@ class Job < ActiveRecord::Base
     status!("errored")
   end
 
+  def cancelling!
+    status!("cancelling")
+  end
+
+  def cancelled!
+    status!("cancelled")
+  end
+
   def finished?
-    succeeded? || failed? || errored? || cancelled?
+    !ACTIVE_STATUSES.include?(status)
   end
 
   def active?
-    pending? || running? || cancelling?
+    ACTIVE_STATUSES.include?(status)
   end
 
   def output
@@ -82,8 +110,16 @@ class Job < ActiveRecord::Base
     update_attribute(:output, output)
   end
 
-  def update_commit!(commit)
-    update_attribute(:commit, commit)
+  def update_git_references!(commit:, tag:)
+    update_columns(commit: commit, tag: tag)
+  end
+
+  def full_url
+    deploy.try(:full_url) || AppRoutes.url_helpers.project_job_url(project, self)
+  end
+
+  def pid
+    execution.try :pid
   end
 
   private

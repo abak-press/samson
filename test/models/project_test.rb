@@ -16,19 +16,34 @@ describe Project do
     Project.create!(name: "hello", repository_url: url).token.wont_be_nil
   end
 
-  describe "#last_released_with_commit?" do
-    it "returns true if the last release had that commit" do
-      project.releases.create!(commit: "XYZ", author: author)
-      assert project.last_released_with_commit?("XYZ")
+  describe "#last_release_contains_commit?" do
+    let(:repository) { mock() }
+
+    before do
+      project.stubs(:repository).returns(repository)
     end
 
-    it "returns false if the last release had a different commit" do
-      project.releases.create!(commit: "123", author: author)
-      assert !project.last_released_with_commit?("XYZ")
+    it "returns true if the last release contains that commit" do
+      stub_github_api('repos/bar/foo/compare/LAST...NEW', { status: 'behind' })
+      project.releases.create!(commit: "LAST", author: author)
+      assert project.last_release_contains_commit?("NEW")
+    end
+
+    it "returns false if last release does not contain commit" do
+      stub_github_api('repos/bar/foo/compare/LAST...NEW', { status: 'ahead' })
+      project.releases.create!(commit: "LAST", author: author)
+      refute project.last_release_contains_commit?("NEW")
+    end
+
+    it "returns true if last release has the same commit" do
+      stub_github_api('repos/bar/foo/compare/LAST...LAST', { status: 'identical' })
+      project.releases.create!(commit: "LAST", author: author)
+      assert project.last_release_contains_commit?("LAST")
     end
 
     it "returns false if there have been no releases" do
-      refute project.last_released_with_commit?("XYZ")
+      project.releases.destroy_all
+      refute project.last_release_contains_commit?("NEW")
     end
   end
 
@@ -40,20 +55,20 @@ describe Project do
     assert_not_equal project.repository_directory, other_project.repository_directory
   end
 
-  describe "#webhook_stages_for_branch" do
+  describe "#webhook_stages_for" do
     it "returns the stages with mappings for the branch" do
       master_stage = project.stages.create!(name: "master_stage")
       production_stage = project.stages.create!(name: "production_stage")
 
-      project.webhooks.create!(branch: "master", stage: master_stage)
-      project.webhooks.create!(branch: "production", stage: production_stage)
+      project.webhooks.create!(branch: "master", stage: master_stage, source: 'any')
+      project.webhooks.create!(branch: "production", stage: production_stage, source: 'travis')
 
-      project.webhook_stages_for_branch("master").must_equal [master_stage]
-      project.webhook_stages_for_branch("production").must_equal [production_stage]
+      project.webhook_stages_for("master", "ci", "jenkins").must_equal [master_stage]
+      project.webhook_stages_for("production", "ci", "travis").must_equal [production_stage]
     end
   end
 
-  describe "#github_project" do
+  describe "#github_repo" do
     it "returns the user/repo part of the repository URL" do
       project = Project.new(repository_url: "git@github.com:foo/bar.git")
       project.github_repo.must_equal "foo/bar"
@@ -74,6 +89,11 @@ describe Project do
 
     it "handles https urls" do
       project = Project.new(repository_url: "https://github.com/foo/bar.git")
+      project.github_repo.must_equal "foo/bar"
+    end
+
+    it "works if '.git' is not at the end" do
+      project = Project.new(repository_url: "https://github.com/foo/bar")
       project.github_repo.must_equal "foo/bar"
     end
   end
@@ -143,18 +163,14 @@ describe Project do
     end
 
     it 'sets the git repository on disk' do
-      repository = mock()
-      repository.expects(:clone!).once
       project = Project.new(id: 9999, name: 'demo_apps', repository_url: repository_url)
-      project.stubs(:repository).returns(repository)
+      project.repository.expects(:clone!).once
       clone_repository(project)
     end
 
     it 'fails to clone the repository and logs the error' do
-      repository = mock()
-      repository.expects(:clone!).returns(false).once
       project = Project.new(id: 9999, name: 'demo_apps', repository_url: repository_url)
-      project.stubs(:repository).returns(repository)
+      project.repository.expects(:clone!).returns(false).once
       expected_message = "Could not clone git repository #{project.repository_url} for project #{project.name} - "
       Rails.logger.expects(:error).with(expected_message)
       clone_repository(project)
@@ -162,12 +178,11 @@ describe Project do
 
     it 'logs that it could not clone the repository when there is an unexpected error' do
       error = 'Unexpected error while cloning the repository'
-      repository = mock()
-      repository.expects(:clone!).raises(error)
       project = Project.new(id: 9999, name: 'demo_apps', repository_url: repository_url)
-      project.stubs(:repository).returns(repository)
+      project.repository.expects(:clone!).raises(error)
       expected_message = "Could not clone git repository #{project.repository_url} for project #{project.name} - #{error}"
       Rails.logger.expects(:error).with(expected_message)
+      Airbrake.expects(:notify).once
       clone_repository(project)
     end
 
@@ -251,6 +266,12 @@ describe Project do
       deploys[pod1.id].must_be_nil
       deploys[pod2.id].must_be_nil
       deploys[pod100.id].must_be_nil
+    end
+
+    it 'contains no non-releases' do
+      prod_deploy.update_column(:release, false)
+      deploys = project.last_deploy_by_group(Time.now)
+      deploys[pod1.id].must_equal nil
     end
 
     it 'performs minimal number of queries' do

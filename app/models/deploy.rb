@@ -2,18 +2,22 @@ class Deploy < ActiveRecord::Base
   has_soft_deletion default_scope: true
 
   belongs_to :stage, touch: true
+  belongs_to :build
   belongs_to :job
   belongs_to :buddy, class_name: 'User'
 
   default_scope { order(created_at: :desc, id: :desc) }
 
   validates_presence_of :reference
-  validate :validate_stage_is_deployable, on: :create
+  validate :validate_stage_is_unlocked, on: :create
+  validate :validate_stage_uses_deploy_groups_properly, on: :create
 
-  delegate :started_by?, :stop!, :status, :user, :output, to: :job
+  delegate :started_by?, :can_be_stopped_by?, :stop!, :status, :user, :output, to: :job
   delegate :active?, :pending?, :running?, :cancelling?, :cancelled?, :succeeded?, to: :job
   delegate :finished?, :errored?, :failed?, to: :job
   delegate :production?, :project, to: :stage
+
+  before_validation :trim_reference
 
   def cache_key
     [super, commit]
@@ -21,6 +25,11 @@ class Deploy < ActiveRecord::Base
 
   def summary
     "#{job.user.name} #{deploy_buddy} #{summary_action} #{short_reference} to #{stage.name}"
+  end
+
+  def summary_for_process
+    t = (Time.now.to_i - start_time.to_i)
+    "ProcessID: #{job.pid} Running: #{t} seconds"
   end
 
   def summary_for_timeline
@@ -67,34 +76,34 @@ class Deploy < ActiveRecord::Base
     end
   end
 
+  def bypassed_approval?
+    stage.deploy_requires_approval? && buddy == user
+  end
+
+  def waiting_for_buddy?
+    pending? && stage.deploy_requires_approval? && !buddy
+  end
+
   def confirm_buddy!(buddy)
     update_attributes!(buddy: buddy, started_at: Time.now)
-    DeployService.new(project, user).confirm_deploy!(self, stage, reference, buddy)
+    DeployService.new(user).confirm_deploy!(self)
   end
 
   def start_time
     started_at || created_at
   end
 
-  def pending_non_production?
-    pending? && !stage.production?
-  end
-
   def pending_start!
-    update_attributes(updated_at: Time.now)       # hack: refresh is immediate with update
-    DeployService.new(project, user).confirm_deploy!(self, stage, reference, buddy)
-  end
-
-  def waiting_for_buddy?
-    pending? && stage.production?
-  end
-
-  def can_be_stopped_by?(user)
-    started_by?(user) || user.is_admin?
+    touch # hack: refresh is immediate with update
+    DeployService.new(user).confirm_deploy!(self)
   end
 
   def self.active
     includes(:job).where(jobs: { status: Job::ACTIVE_STATUSES })
+  end
+
+  def self.pending
+    includes(:job).where(jobs: { status: 'pending' })
   end
 
   def self.running
@@ -114,8 +123,40 @@ class Deploy < ActiveRecord::Base
   end
 
   def self.expired
-    threshold = BuddyCheck.deploy_max_minutes_pending.minutes.ago
+    threshold = BuddyCheck.time_limit.minutes.ago
     joins(:job).where(jobs: { status: 'pending'} ).where("jobs.created_at < ?", threshold)
+  end
+
+  def csv_buddy
+    if not (stage.deploy_requires_approval?)
+      "Not Required"
+    elsif buddy.nil? && pending?
+      "Pending"
+    elsif buddy.nil?
+      "None"
+    elsif (user.id == buddy.id)
+      "Bypassed"
+    else
+      buddy.name
+    end
+  end
+
+  def self.to_csv
+    @deploys = Deploy.joins(:stage).all()
+    CSV.generate do |csv|
+      csv << ["Deploy Number", "Project Name", "Deploy Sumary", "Deploy Updated", "Deploy Created", "Deployer Name", "Buddy Name", "Production Flag", Deploy.joins(:stage).count.to_s + " Deploys"]
+      @deploys.find_each do |deploy|
+        csv << [deploy.id, deploy.project.name, deploy.summary, deploy.updated_at, deploy.start_time, deploy.job.user.name, deploy.csv_buddy, deploy.stage.production]
+      end
+    end
+  end
+
+  def url
+    AppRoutes.url_helpers.project_deploy_path(project, self)
+  end
+
+  def full_url
+    AppRoutes.url_helpers.project_deploy_url(project, self)
   end
 
   private
@@ -138,11 +179,17 @@ class Deploy < ActiveRecord::Base
     end
   end
 
-  def validate_stage_is_deployable
+  def validate_stage_is_unlocked
     if stage.locked_for?(user) || Lock.global.exists?
       errors.add(:stage, 'is locked')
-    elsif deploy = stage.current_deploy
-      errors.add(:stage, "is being deployed by #{deploy.job.user.name} with #{deploy.short_reference}")
+    end
+  end
+
+  # commands and deploy groups can change via many different paths,
+  # so we validate once a user actually tries to execute the command
+  def validate_stage_uses_deploy_groups_properly
+    if DeployGroup.enabled? && stage.deploy_groups.none? && stage.command.include?("$DEPLOY_GROUPS")
+      errors.add(:stage, "contains at least one command using the $DEPLOY_GROUPS environment variable, but there are no Deploy Groups associated with this stage.")
     end
   end
 
@@ -156,5 +203,9 @@ class Deploy < ActiveRecord::Base
     else
       "(with #{buddy.name})"
     end
+  end
+
+  def trim_reference
+    self.reference.strip! if self.reference.presence
   end
 end

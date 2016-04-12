@@ -10,6 +10,12 @@ elsif ENV['COVERAGE']
   SimpleCov.start 'rails'
 end
 
+require_relative 'support/single_cov'
+
+# rake adds these, but we don't need them / want to be in a consistent environment
+$LOAD_PATH.delete 'lib'
+$LOAD_PATH.delete 'test'
+
 require_relative '../config/environment'
 require 'rails/test_help'
 require 'minitest/rails'
@@ -31,9 +37,24 @@ module StubGithubAPI
   end
 end
 
+module DefaultStubs
+  def create_default_stubs
+    SseRailsEngine.stubs(:send_event).returns(true)
+    Project.any_instance.stubs(:clone_repository).returns(true)
+    Project.any_instance.stubs(:clean_repository).returns(true)
+  end
+
+  def undo_default_stubs
+    Project.any_instance.unstub(:clone_repository)
+    Project.any_instance.unstub(:clean_repository)
+    SseRailsEngine.unstub(:send_event)
+  end
+end
+
 class ActiveSupport::TestCase
   include Warden::Test::Helpers
   include StubGithubAPI
+  include DefaultStubs
 
   ActiveRecord::Migration.check_pending!
 
@@ -41,38 +62,46 @@ class ActiveSupport::TestCase
   #
   # Note: You'll currently still have to declare fixtures explicitly in integration tests
   # -- they do not yet inherit this setting
+  Samson::Hooks.plugin_test_setup
   fixtures :all
 
   before do
+    @before_threads = Thread.list
     Rails.cache.clear
-    stubs_project_callbacks
+    create_default_stubs
   end
 
-  after { sleep 0.1 while extra_threads.present? }
+  after { fail_if_dangling_threads }
+
+  def fail_if_dangling_threads
+    max_threads = 1 # Timeout.timeout adds a thread
+    raise "Test left dangling threads: #{extra_threads}" if extra_threads.count > max_threads
+  ensure
+    kill_extra_threads
+  end
+
+  def kill_extra_threads
+    extra_threads.map(&:kill).map(&:join)
+  end
 
   def extra_threads
-    normal = ENV['CI'] ? 2 : 3 # there are always 3 threads hanging around, 2 unknown and 1 from the test timeout helper code
-    threads = (Thread.list - [Thread.current])
-    raise "too low threads, adjust minimum" if threads.size < normal
-    threads.sort_by(&:object_id)[normal..-1] # always kill the newest threads (run event_streamer_test.rb + stage_test.rb to make it blow up)
+    if @before_threads
+      Thread.list - @before_threads
+    else
+      []
+    end
   end
 
   def assert_valid(record)
     assert record.valid?, record.errors.full_messages
   end
 
-  def refute_valid(record)
-    refute record.valid?
-  end
+  def refute_valid(record, error_keys = nil)
+    refute record.valid?, "Expected record of type #{record.class.name} to be invalid"
 
-  def stubs_project_callbacks
-    Project.any_instance.stubs(:clone_repository).returns(true)
-    Project.any_instance.stubs(:clean_repository).returns(true)
-  end
-
-  def unstub_project_callbacks
-    Project.any_instance.unstub(:clone_repository)
-    Project.any_instance.unstub(:clean_repository)
+    Array.wrap(error_keys).compact.each do |key|
+      record.errors.keys.must_include key
+    end
   end
 
   def ar_queries
@@ -105,6 +134,11 @@ class ActiveSupport::TestCase
   ensure
     $VERBOSE = old
   end
+
+  undef :assert_nothing_raised
+  class << self
+    undef :test
+  end
 end
 
 Mocha::Expectation.class_eval do
@@ -115,6 +149,7 @@ end
 
 class ActionController::TestCase
   include StubGithubAPI
+  include DefaultStubs
 
   class << self
     def unauthorized(method, action, params = {})
@@ -124,10 +159,11 @@ class ActionController::TestCase
       end
     end
 
-    %w{super_admin admin deployer viewer}.each do |user|
+    %w{super_admin admin deployer viewer project_admin project_deployer}.each do |user|
       define_method "as_a_#{user}" do |&block|
         describe "as a #{user}" do
-          setup { request.env['warden'].set_user(users(user)) }
+          let(:user) { users(user) }
+          setup { request.env['warden'].set_user(self.user) }
           instance_eval(&block)
         end
       end
@@ -140,10 +176,15 @@ class ActionController::TestCase
     request.env['warden'] = Warden::Proxy.new(request.env, manager)
 
     stub_request(:get, "https://#{Rails.application.config.samson.github.status_url}/api/status.json").to_timeout
+    create_default_stubs
   end
 
   teardown do
     Warden.test_reset!
+  end
+
+  def set_form_authenticity_token
+    session[:_csrf_token] = SecureRandom.base64(32)
   end
 
   def warden

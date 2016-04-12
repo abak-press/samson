@@ -1,7 +1,9 @@
 class JobsController < ApplicationController
-  before_filter :authorize_admin!, only: [:new, :create, :destroy]
+  include ProjectLevelAuthorization
 
-  before_action :find_project, except: [:enabled]
+  skip_before_action :require_project, only: [:enabled]
+
+  before_action :authorize_project_admin!, only: [:new, :create, :destroy]
   before_action :find_job, only: [:show, :destroy]
 
   def index
@@ -22,8 +24,8 @@ class JobsController < ApplicationController
     )
 
     if @job.persisted?
-      JobExecution.start_job(job_params[:commit].strip, @job)
-      redirect_to project_job_path(@project, @job)
+      JobExecution.start_job(JobExecution.new(@job.commit, @job))
+      redirect_to [@project, @job]
     else
       render :new
     end
@@ -50,13 +52,13 @@ class JobsController < ApplicationController
   end
 
   def destroy
-    if @job.started_by?(current_user) || current_user.is_admin?
+    if @job.can_be_stopped_by?(current_user)
       @job.stop!
-
-      head :ok
     else
-      head :forbidden
+      flash[:error] = "You do not have privileges to stop this job."
     end
+
+    redirect_to [@project, @job]
   end
 
   private
@@ -69,11 +71,7 @@ class JobsController < ApplicationController
     params.require(:commands).permit(ids: [])
   end
 
-  def find_project
-    @project = Project.find_by_param!(params[:project_id])
-  end
-
   def find_job
-    @job = @project.jobs.find(params[:id])
+    @job = current_project.jobs.find(params[:id])
   end
 end

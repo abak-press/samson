@@ -22,6 +22,15 @@
           <%= form.text_field :token, class: "form-control", disabled: true %>
         </div>
       </div>
+      <div class="form-group">
+        <%= form.label :time_format, class: "col-lg-2 control-label" %>
+        <div class="col-lg-4">
+          <% User::TIME_FORMATS.each do |time_format| %>
+            <%= form.radio_button(:time_format, time_format) %>
+            <%= form.label(:time_format, "#{time_format.capitalize}", :value => time_format) %>
+          <% end %>
+        </div>
+      </div>
 
       <div class="form-group">
         <div class="col-lg-offset-2 col-lg-10">
@@ -29,6 +38,14 @@
           <%= form.label :desktop_notify, "Desktop notifications" %>
         </div>
       </div>
+
+      <% if display_access_request_link? %>
+        <div class="form-group">
+          <div class="col-lg-offset-2 col-lg-10">
+            <%= link_to_request_access %>
+          </div>
+        </div>
+      <% end %>
 
       <div class="form-group">
         <div class="col-lg-offset-2 col-lg-10">

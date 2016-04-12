@@ -7,13 +7,14 @@
     "url": "git://github.com/zendesk/samson.git"
   },
   "devDependencies": {
-    "karma": "~0.10",
-    "gulp-util": "~2.2.14",
-    "gulp": "~3.5.2",
-    "gulp-karma": "0.0.2",
-    "gulp-jshint": "~1.4.2"
+    "karma": "~0.12",
+    "karma-jasmine": "~0.2.0",
+    "karma-phantomjs-launcher": "~0.1.4",
+    "jshint": "~2.7.0"
   },
   "scripts": {
-    "test": "./node_modules/.bin/gulp test"
+    "test": "bundle exec rake test:js",
+    "jshint": "./node_modules/.bin/jshint app/assets/javascripts/*",
+    "jshint:plugins": "./node_modules/.bin/jshint plugins/*/app/assets/javascripts/*"
   }
 }
