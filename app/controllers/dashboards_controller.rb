@@ -6,14 +6,10 @@ class DashboardsController < ApplicationController
   end
 
   def deploy_groups
-    render json: { 'deploy_groups' => @environment.deploy_groups }
+    render json: { 'deploy_groups' => @environment.deploy_groups.sort_by(&:natural_order) }
   end
 
   private
-
-  def ordered_projects
-    Project.ordered_for_user(current_user).with_deploy_groups
-  end
 
   def find_environment
     @environment = Environment.find_by_param!(params[:id])

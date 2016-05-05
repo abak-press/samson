@@ -1,5 +1,7 @@
 require_relative '../test_helper'
 
+SingleCov.covered! uncovered: 9
+
 describe User do
   describe "#name" do
     let(:user) { User.new(name: username, email: 'test@test.com') }
@@ -111,7 +113,7 @@ describe User do
         User.create!(name: "Test", external_id: 9)
       end
 
-      setup { existing_user }
+      before { existing_user }
 
       it "does not update the user" do
         user.name.must_equal("Test")
@@ -134,7 +136,7 @@ describe User do
           role_id: Role::ADMIN.id
         }}
 
-        setup do
+        before do
           existing_user.update_attributes!(role_id: Role::VIEWER.id)
         end
 
@@ -151,7 +153,7 @@ describe User do
           role_id: Role::VIEWER.id
         }}
 
-        setup do
+        before do
           existing_user.update_attributes!(role_id: Role::ADMIN.id)
         end
 
@@ -159,6 +161,16 @@ describe User do
           user.role_id.must_equal(Role::ADMIN.id)
         end
       end
+    end
+  end
+
+  describe ".administrated_projects" do
+    it "is all for admin" do
+      users(:admin).administrated_projects.map(&:id).sort.must_equal Project.pluck(:id).sort
+    end
+
+    it "is allowed for project admin" do
+      users(:project_admin).administrated_projects.map(&:permalink).sort.must_equal ['foo']
     end
   end
 
@@ -269,11 +281,14 @@ describe User do
       users(:project_admin).is_admin_for?(projects(:test)).must_equal(true)
     end
 
+    it "is true for a user that are admins" do
+      users(:admin).is_admin_for?(projects(:test)).must_equal(true)
+      users(:super_admin).is_admin_for?(projects(:test)).must_equal(true)
+    end
+
     it "is false for users that have not been granted the role of project admin" do
-      users(:viewer).is_admin_for?(projects(:test)).wont_equal(true)
-      users(:deployer).is_admin_for?(projects(:test)).wont_equal(true)
-      users(:admin).is_admin_for?(projects(:test)).wont_equal(true)
-      users(:super_admin).is_admin_for?(projects(:test)).wont_equal(true)
+      users(:viewer).is_admin_for?(projects(:test)).must_equal(false)
+      users(:deployer).is_admin_for?(projects(:test)).must_equal(false)
     end
   end
 
@@ -287,16 +302,53 @@ describe User do
     end
 
     it "is false for users that have not been granted the roles of project deployer or project admin" do
-      users(:viewer).is_deployer_for?(projects(:test)).wont_equal(true)
-      users(:deployer).is_deployer_for?(projects(:test)).wont_equal(true)
-      users(:admin).is_deployer_for?(projects(:test)).wont_equal(true)
-      users(:super_admin).is_deployer_for?(projects(:test)).wont_equal(true)
+      users(:viewer).is_deployer_for?(projects(:test)).must_equal(false)
+    end
+
+    it "is true for deployers" do
+      users(:deployer).is_deployer_for?(projects(:test)).must_equal(true)
+      users(:admin).is_deployer_for?(projects(:test)).must_equal(true)
+      users(:super_admin).is_deployer_for?(projects(:test)).must_equal(true)
     end
   end
 
   describe "#project_role_for" do
     it "returns the project role for the given project" do
       users(:project_admin).project_role_for(projects(:test)).must_equal user_project_roles(:project_admin)
+    end
+  end
+
+  describe "#starred_project?" do
+    let(:user) { users(:viewer) }
+    let(:project) { projects(:test) }
+
+    it "is true when starred" do
+      user.stars.create!(project: project)
+      user.starred_project?(project).must_equal true
+    end
+
+    it "is false when not starred" do
+      user.starred_project?(project).must_equal false
+    end
+
+    it "is cached" do
+      user.stars.expects(:pluck).returns []
+      user.starred_project?(project).must_equal false
+      user.stars.expects(:pluck).never
+      user.starred_project?(project).must_equal false
+    end
+
+    it "expires the cache when a new star is created" do
+      user.starred_project?(project).must_equal false
+      user.stars.create!(project: project)
+      user.starred_project?(project).must_equal true
+    end
+
+    it "expires the cache when a star is deleted" do
+      star = user.stars.create!(project: project)
+      user.starred_project?(project).must_equal true
+      star.destroy
+      user.starred_project?(project).must_equal false
     end
   end
 end

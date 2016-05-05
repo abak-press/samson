@@ -1,7 +1,8 @@
 require_relative '../test_helper'
 
-describe KubernetesRolesController do
+SingleCov.covered!
 
+describe KubernetesRolesController do
   let(:project) { projects(:test) }
 
   describe 'a GET to #index' do
@@ -239,7 +240,7 @@ describe KubernetesRolesController do
     let(:contents) { parse_role_config_file('kubernetes_role_config_file') }
 
     before do
-      Project.any_instance.stubs(:directory_contents_from_repo).returns(['some_folder/file_name.yml'])
+      Project.any_instance.stubs(:kubernetes_config_files_in_repo).returns(['some_folder/file_name.yml'])
       Project.any_instance.stubs(:file_from_repo).returns(contents)
     end
 
@@ -282,7 +283,7 @@ describe KubernetesRolesController do
 
     as_a_admin do
       before do
-        Project.any_instance.stubs(:directory_contents_from_repo).returns([])
+        Project.any_instance.stubs(:kubernetes_config_files_in_repo).returns([])
       end
 
       it 'responds with a 404 if no config files where found' do

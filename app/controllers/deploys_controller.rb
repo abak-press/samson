@@ -1,12 +1,12 @@
 require 'csv'
 
 class DeploysController < ApplicationController
-  include ProjectLevelAuthorization
+  include CurrentProject
 
-  skip_before_action :require_project, only: [:active, :active_count, :recent, :changeset]
+  skip_before_action :require_project, only: [:active, :active_count, :changeset]
 
   before_action :authorize_project_deployer!, only: [:new, :create, :confirm, :buddy_check, :destroy]
-  before_action :find_deploy, except: [:index, :recent, :active, :active_count, :new, :create, :confirm, :search]
+  before_action :find_deploy, except: [:index, :active, :active_count, :new, :create, :confirm, :search]
   before_action :stage, only: :new
 
   def index
@@ -29,24 +29,7 @@ class DeploysController < ApplicationController
 
   def active
     @deploys = active_deploy_scope
-
-    respond_to do |format|
-      format.html { render 'recent', locals: { title: 'Current Deploys', show_filters: false, controller: 'currentDeploysCtrl' } }
-      format.json { render json: @deploys }
-    end
-  end
-
-  def recent
-    respond_to do |format|
-      format.html { render 'recent', locals: { title: 'Recent Deploys', show_filters: true, controller: 'TimelineCtrl' } }
-      format.json do
-        render json: Deploy.page(params[:page]).per(30)
-      end
-      format.csv do
-        datetime = Time.now.strftime "%Y%m%d_%H%M"
-        send_data Deploy.to_csv, type: :csv, filename: "Deploys_#{datetime}.csv"
-      end
-    end
+    render partial: 'shared/deploys_table', layout: false if params[:partial]
   end
 
   # Takes the same params that are used by the client side filtering
@@ -60,7 +43,9 @@ class DeploysController < ApplicationController
   #   * status (what is the status of this job failed|running| etc)
 
   def search
-    if (params[:status] && !Job.valid_status?(params[:status]))
+    status = params[:status].presence
+
+    if status && !Job.valid_status?(params[:status])
       render json: { errors: "invalid status given" }, status: 400
       return
     end
@@ -70,13 +55,13 @@ class DeploysController < ApplicationController
     end
 
     if params[:project_name].present?
-      projects = Project.where(name: params[:project_name]).pluck(:id)
+      projects = Project.where("name LIKE ?", "%#{ActiveRecord::Base.send(:sanitize_sql_like, params[:project_name])}%").pluck(:id)
     end
 
-    if users || params[:status]
+    if users || status
       jobs = Job
       jobs = jobs.where(user: users) if users
-      jobs = jobs.where(status: params[:status]) if params[:status]
+      jobs = jobs.where(status: status) if status
     end
 
     if params[:production].present? || projects
@@ -89,13 +74,15 @@ class DeploysController < ApplicationController
     end
 
     deploys = Deploy
-    deploys = Deploy.where(stage: stages) if stages
-    deploys = Deploy.where(job: jobs) if jobs
+    deploys = deploys.where(stage: stages) if stages
+    deploys = deploys.where(job: jobs) if jobs
+    @deploys = deploys.page(params[:page]).per(30)
 
     respond_to do |format|
       format.json do
-        render json: deploys.page(params[:page]).per(30)
+        render json: @deploys
       end
+      format.html
       format.csv do
         datetime = Time.now.strftime "%Y%m%d_%H%M"
         send_data deploys.to_csv, type: :csv, filename: "deploy_search_results_#{datetime}.csv"
@@ -123,7 +110,8 @@ class DeploysController < ApplicationController
       end
 
       format.json do
-        render json: @deploy.to_json, status: @deploy.persisted? ? :created : 422, location: [current_project, @deploy]
+        status = (@deploy.persisted? ? :created : :unprocessable_entity)
+        render json: @deploy.to_json, status: status, location: [current_project, @deploy]
       end
     end
   end
@@ -154,7 +142,7 @@ class DeploysController < ApplicationController
   end
 
   def changeset
-    if stale?(etag: @deploy.cache_key, last_modified: @deploy.updated_at)
+    if stale? @deploy
       @changeset = @deploy.changeset
       render 'changeset', layout: false
     end

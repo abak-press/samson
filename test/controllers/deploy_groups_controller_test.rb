@@ -1,5 +1,7 @@
 require_relative '../test_helper'
 
+SingleCov.covered!
+
 describe DeployGroupsController do
   let(:deploy_group) { deploy_groups(:pod1) }
   let(:production_deploy) { deploys(:succeeded_production_test) }
@@ -18,7 +20,7 @@ describe DeployGroupsController do
         deploy_index = result.deploys.index { |deploy| deploy['id'] == production_deploy.id }
         deploy_index.wont_be_nil
         result.deploys[deploy_index].project.name.must_equal production_deploy.project.name
-        result.deploys[deploy_index].url.must_equal project_deploy_path(production_deploy.project, production_deploy)
+        result.deploys[deploy_index].url.must_equal "#{ENV.fetch("DEFAULT_URL")}#{project_deploy_path(production_deploy.project, production_deploy)}"
       end
 
       it 'handles a deploy_group with no deploys or stages' do

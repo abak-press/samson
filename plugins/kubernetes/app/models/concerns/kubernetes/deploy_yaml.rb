@@ -23,15 +23,21 @@ module Kubernetes
 
     def template
       @template ||= begin
-        yaml = YAML.load_stream(raw_template, kubernetes_role.config_file).detect do |doc|
-          doc['kind'] == 'Deployment'
+        sections = YAML.load_stream(raw_template, template_name).select { |doc| doc['kind'] == 'Deployment' }
+        if sections.size == 1
+          RecursiveOpenStruct.new(sections.first, :recurse_over_arrays => true)
+        else
+          raise Samson::Hooks::UserError, "Template #{template_name} has #{sections.size} Deployment sections, having 1 section is valid."
         end
-        RecursiveOpenStruct.new(yaml, :recurse_over_arrays => true)
       end
     end
 
     def raw_template
-      @raw_template ||= build.file_from_repo(kubernetes_role.config_file)
+      @raw_template ||= build.file_from_repo(template_name)
+    end
+
+    def template_name
+      kubernetes_role.config_file
     end
 
     # This key replaces the default kubernetes key: 'deployment.kubernetes.io/podTemplateHash'
@@ -63,8 +69,11 @@ module Kubernetes
     # Sets the metadata that is going to be used as the selector. Kubernetes will use this metadata to select the
     # old and new Replication Controllers when managing a new Deployment.
     def set_selector_metadata
+      template.spec.selector ||= RecursiveOpenStruct.new(matchLabels: {})
+      template.spec.selector.matchLabels ||= {}
+
       deployment_labels.each do |key, value|
-        template.spec.selector[key] = value
+        template.spec.selector.matchLabels[key] = value
       end
     end
 

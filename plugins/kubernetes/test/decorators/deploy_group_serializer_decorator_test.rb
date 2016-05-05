@@ -1,5 +1,7 @@
 require_relative '../test_helper'
 
+SingleCov.covered!
+
 describe DeployGroupSerializer do
   describe 'a deploy group not associated with a kubernetes cluster' do
     let(:deploy_group) { deploy_groups(:pod100) }
@@ -25,7 +27,7 @@ describe DeployGroupSerializer do
       parsed = JSON.parse(DeployGroupSerializer.new(deploy_group).to_json).with_indifferent_access
       parsed[:deploy_group][:kubernetes_cluster].wont_be_nil
       parsed[:deploy_group][:kubernetes_cluster][:name].must_equal 'test'
-      parsed[:deploy_group][:kubernetes_cluster][:config_filepath].must_equal '/tmp/config'
+      parsed[:deploy_group][:kubernetes_cluster][:config_filepath].must_equal 'plugins/kubernetes/test/cluster_config.yml'
       parsed[:deploy_group][:kubernetes_cluster][:config_context].must_equal 'test'
     end
   end

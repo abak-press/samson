@@ -1,5 +1,7 @@
 require_relative '../test_helper'
 
+SingleCov.covered!
+
 describe GitRepository do
   include GitRepoTestHelper
 
@@ -19,44 +21,78 @@ describe GitRepository do
     repository.repository_directory.must_equal project.repository_directory
   end
 
-  it 'should clone a repository' do
-    Dir.mktmpdir do |dir|
-      create_repo_with_tags
-      repository.clone!(from: repo_temp_dir, to: dir)
-      Dir.exist?(dir).must_equal true
+  describe "#clone!" do
+    it 'clones a repository' do
+      Dir.mktmpdir do |dir|
+        create_repo_with_tags
+        repository.clone!(from: repo_temp_dir, to: dir).must_equal true
+        Dir.exist?("#{dir}/.git").must_equal true
+      end
+    end
+
+    it "returns false when clone fails" do
+      Dir.mktmpdir do |dir|
+        repository.clone!(from: repo_temp_dir, to: dir).must_equal false
+        Dir.exist?("#{dir}/.git").must_equal false
+      end
     end
   end
 
-  describe "#update!" do
-    it 'updates the repository' do
+  describe "#update_local_cache!" do
+    it 'updates an existing repository' do
       create_repo_with_tags
       repository.clone!.must_equal(true)
+      Dir.chdir(repository.repo_cache_dir) do
+        number_of_commits.must_equal 1
+      end
+
       Dir.chdir(repository.repo_cache_dir) { number_of_commits.must_equal(1) }
+
+      # create an extra commit in the remote
       execute_on_remote_repo <<-SHELL
         echo monkey > foo2
         git add foo2
         git commit -m "second commit"
       SHELL
-      repository.update!.must_equal(true)
+
+      repository.update_local_cache!.must_equal(true)
+
+      # commit should now be locally available
       Dir.chdir(repository.repo_cache_dir) do
-        update_workspace
-        number_of_commits.must_equal(2)
+        number_of_commits('origin/master').must_equal(2)
       end
     end
 
-    it 'fails when its cache was removed' do
+    it 'clones when cache does not exist' do
+      create_repo_without_tags
+      File.exist?(repository.repo_cache_dir).must_equal false
+
+      repository.update_local_cache!.must_equal(true)
+
+      Dir.chdir(repository.repo_cache_dir) do
+        number_of_commits.must_equal(1)
+      end
+    end
+
+    it 'returns false when update fails' do
       create_repo_with_tags
-      repository.update!.must_equal(false)
+      repository.clone!.must_equal(true)
+      Dir.chdir(repository.repo_cache_dir) do
+        raise unless system("git remote rm origin")
+      end
+      repository.update_local_cache!.must_equal false
     end
   end
 
-  it 'should switch to a different branch' do
-    create_repo_with_an_additional_branch
-    repository.clone!.must_equal(true)
-    repository.send(:checkout!, 'master').must_equal(true)
-    Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('master') }
-    repository.send(:checkout!, 'test_user/test_branch').must_equal(true)
-    Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('test_user/test_branch') }
+  describe "#cheakout!" do
+    it 'switches to a different branch' do
+      create_repo_with_an_additional_branch
+      repository.clone!.must_equal(true)
+      repository.send(:checkout!, 'master').must_equal(true)
+      Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('master') }
+      repository.send(:checkout!, 'test_user/test_branch').must_equal(true)
+      Dir.chdir(repository.repo_cache_dir) { current_branch.must_equal('test_user/test_branch') }
+    end
   end
 
   describe "#commit_from_ref" do
@@ -89,7 +125,7 @@ describe GitRepository do
       execute_on_remote_repo <<-SHELL
         git checkout test_branch
         echo "blah blah" >> bar.txt
-        git add bar
+        git add bar.txt
         git commit -m "created bar.txt"
         git tag -a annotated_tag -m "This is really worth tagging"
         git checkout master
@@ -193,6 +229,43 @@ describe GitRepository do
 
     it 'does not fail when repo is missing' do
       repository.clean!
+    end
+  end
+
+  describe "#file_content" do
+    before do
+      create_repo_without_tags
+      repository.clone!
+    end
+
+    let(:sha) { repository.commit_from_ref('master', length: nil) }
+
+    it 'finds content' do
+      repository.file_content('foo', sha).must_equal "monkey"
+    end
+
+    it 'returns nil when file does not exist' do
+      repository.file_content('foox', sha).must_equal nil
+    end
+
+    it 'returns nil when sha does not exist' do
+      repository.file_content('foox', 'a' * 40).must_equal nil
+    end
+
+    it "always updates for non-shas" do
+      repository.expects(:sha_exist?).never
+      repository.expects(:update!)
+      repository.file_content('foox', 'a' * 41).must_equal nil
+    end
+
+    it "does not update when sha exists to save time" do
+      repository.expects(:update!).never
+      repository.file_content('foo', sha).must_equal "monkey"
+    end
+
+    it "updates when sha is missing" do
+      repository.expects(:update!)
+      repository.file_content('foo', 'a' * 40).must_equal nil
     end
   end
 end

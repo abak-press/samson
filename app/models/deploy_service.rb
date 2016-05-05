@@ -12,7 +12,7 @@ class DeployService
     if deploy.persisted?
       send_sse_deploy_update('new', deploy)
 
-      if !deploy.waiting_for_buddy? || release_approved?(deploy)
+      if !deploy.waiting_for_buddy? || copy_approval_from_last_deploy(deploy)
         confirm_deploy!(deploy)
       end
     end
@@ -42,23 +42,26 @@ class DeployService
   private
 
   def construct_env(stage)
-    { STAGE: stage.permalink }.tap do |env|
-      group_names = stage.deploy_groups.pluck(:env_value).sort.join(" ")
-      env[:DEPLOY_GROUPS] = group_names if group_names.present?
-    end
+    env = { STAGE: stage.permalink }
+
+    group_names = stage.deploy_groups.sort_by(&:natural_order).map(&:env_value).join(" ")
+    env[:DEPLOY_GROUPS] = group_names if group_names.present?
+
+    env
   end
 
   def latest_approved_deploy(reference, project)
     Deploy.where(reference: reference).where('buddy_id is NOT NULL AND started_at > ?', BuddyCheck.grace_period.ago)
       .includes(:stage)
       .where(stages: {project_id: project})
+      .reorder('started_at desc')
       .detect { |d| d.production? && !d.bypassed_approval? }
   end
 
-  def release_approved?(deploy)
+  def copy_approval_from_last_deploy(deploy)
     last_deploy = latest_approved_deploy(deploy.reference, deploy.stage.project)
-
     return false unless last_deploy
+    return false if last_deploy.started_at < last_deploy.stage.command_updated_at
 
     deploy.buddy = (last_deploy.buddy == @user ? last_deploy.job.user : last_deploy.buddy)
     deploy.started_at = Time.now
@@ -83,7 +86,6 @@ class DeployService
     send_sse_deploy_update('finish', deploy)
     send_deploy_email(deploy)
     send_failed_deploy_email(deploy)
-    send_datadog_notification(deploy)
     send_github_notification(deploy)
     update_github_deployment_status(deploy)
   end
@@ -98,12 +100,6 @@ class DeployService
   def send_failed_deploy_email(deploy)
     if emails = deploy.stage.automated_failure_emails(deploy)
       DeployMailer.deploy_failed_email(deploy, emails).deliver_now
-    end
-  end
-
-  def send_datadog_notification(deploy)
-    if deploy.stage.send_datadog_notifications?
-      DatadogNotification.new(deploy).deliver
     end
   end
 

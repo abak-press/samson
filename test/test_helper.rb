@@ -1,6 +1,8 @@
 ENV["RAILS_ENV"] ||= "test"
 
-ENV['PROJECT_CREATED_NOTIFY_ADDRESS'] = 'blah@example.com'
+require 'single_cov'
+SingleCov::APP_FOLDERS << 'decorators'
+SingleCov.setup :minitest
 
 if ENV['CODECLIMATE_REPO_TOKEN']
   require 'codeclimate-test-reporter'
@@ -9,8 +11,6 @@ elsif ENV['COVERAGE']
   require 'simplecov'
   SimpleCov.start 'rails'
 end
-
-require_relative 'support/single_cov'
 
 # rake adds these, but we don't need them / want to be in a consistent environment
 $LOAD_PATH.delete 'lib'
@@ -139,6 +139,22 @@ class ActiveSupport::TestCase
   class << self
     undef :test
   end
+
+  def create_secret(key)
+    SecretStorage::DbBackend::Secret.create!(id: key, value: 'MY-SECRET', updater_id: users(:admin).id, creator_id: users(:admin).id)
+  end
+
+  def with_env(env)
+    old = env.map do |k, v|
+      k = k.to_s
+      o = ENV[k]
+      ENV[k] = v
+      [k, o]
+    end
+    yield
+  ensure
+    old.each { |k, v| ENV[k] = v }
+  end
 end
 
 Mocha::Expectation.class_eval do
@@ -155,7 +171,7 @@ class ActionController::TestCase
     def unauthorized(method, action, params = {})
       it "is unauthorized when doing a #{method} to #{action} with #{params}" do
         send(method, action, params)
-        @unauthorized.must_equal true, "Request was not marked unauthorized"
+        assert_unauthorized
       end
     end
 
@@ -163,14 +179,14 @@ class ActionController::TestCase
       define_method "as_a_#{user}" do |&block|
         describe "as a #{user}" do
           let(:user) { users(user) }
-          setup { request.env['warden'].set_user(self.user) }
+          before { request.env['warden'].set_user(self.user) }
           instance_eval(&block)
         end
       end
     end
   end
 
-  setup do
+  before do
     middleware = Rails.application.config.middleware.detect {|m| m.name == 'Warden::Manager'}
     manager = Warden::Manager.new(nil, &middleware.block)
     request.env['warden'] = Warden::Proxy.new(request.env, manager)
@@ -179,7 +195,7 @@ class ActionController::TestCase
     create_default_stubs
   end
 
-  teardown do
+  after do
     Warden.test_reset!
   end
 
@@ -191,6 +207,14 @@ class ActionController::TestCase
     request.env['warden']
   end
 
+  def assert_unauthorized
+    @unauthorized.must_equal true, "Request was not marked unauthorized"
+  end
+
+  def refute_unauthorized
+    refute @unauthorized, "Request was marked unauthorized"
+  end
+
   def process_with_catch_warden(*args)
     catch(:warden) do
       return process_without_catch_warden(*args)
@@ -200,6 +224,18 @@ class ActionController::TestCase
   end
 
   alias_method_chain :process, :catch_warden
+
+  def self.use_test_routes
+    before do
+      Rails.application.routes.draw do
+        match "/test/:test_route/:controller/:action", :via => [:get, :post, :put, :patch, :delete]
+      end
+    end
+
+    after do
+      Rails.application.reload_routes!
+    end
+  end
 end
 
 WebMock.disable_net_connect!(allow: 'codeclimate.com')

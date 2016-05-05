@@ -2,6 +2,8 @@ require 'ansible'
 require 'github/markdown'
 
 module ApplicationHelper
+  BOOTSTRAP_FLASH_MAPPINGS = { notice: :info, error: :danger, authorization_error: :danger, success: :success }
+
   include Ansible
   include DateTimeHelper
 
@@ -9,11 +11,12 @@ module ApplicationHelper
 
   def render_log(str)
     escaped = ERB::Util.html_escape(str)
-    ansi_escaped(escaped).gsub(/\[([A-Z]|[0-9]+)m?/, '').html_safe
+    ansi_escaped(escaped).html_safe
   end
 
+  # https://github.com/showdownjs/showdown/wiki/Markdown's-XSS-Vulnerability-(and-how-to-mitigate-it)
   def markdown(str)
-    GitHub::Markdown.render_gfm(str).html_safe
+    sanitize GitHub::Markdown.render_gfm(str)
   end
 
   def deploy_link(project, stage)
@@ -48,6 +51,20 @@ module ApplicationHelper
 
   def relative_time(time)
     content_tag(:span, time.rfc822, data: { time: datetime_to_js_ms(time) }, class: "mouseover")
+  end
+
+  def render_time(time, format)
+    # grab the time format that the user has in their profile
+    format ||= current_user.time_format
+    if format == 'local'
+      local_time = time.in_time_zone(cookies[:timezone] || 'UTC').to_s
+      content_tag(:time, local_time, datetime: local_time)
+    elsif format == 'utc'
+      utc_time = time.in_time_zone('UTC')
+      content_tag(:time, utc_time.to_s, datetime: utc_time)
+    else
+      relative_time(time)
+    end
   end
 
   def sortable(column, title = nil)
@@ -129,5 +146,24 @@ module ApplicationHelper
   # like `render collection` does
   def static_render(collection)
     render partial: collection.first.to_partial_path, collection: collection if collection.any?
+  end
+
+  # Flash type -> Bootstrap alert class
+  def flash_messages
+    flash.flat_map do |type, messages|
+      type = type.to_sym
+      bootstrap_class = BOOTSTRAP_FLASH_MAPPINGS[type] || :info
+      Array.wrap(messages).map do |message|
+        [type, bootstrap_class, message]
+      end
+    end
+  end
+
+  def link_to_url(url)
+    link_to(url, url)
+  end
+
+  def environments
+    @environments ||= Environment.all
   end
 end

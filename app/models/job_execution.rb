@@ -21,7 +21,7 @@ class JobExecution
 
   def initialize(reference, job, env = {}, &block)
     @output = OutputBuffer.new
-    @executor = TerminalExecutor.new(@output, verbose: true)
+    @executor = TerminalExecutor.new(@output, verbose: true, project: job.project)
     @viewers = JobViewers.new(@output)
 
     @subscribers = []
@@ -85,7 +85,6 @@ class JobExecution
   private
 
   def stage
-    # TODO -- this class should not know about stages
     @job.deploy.try(:stage)
   end
 
@@ -154,7 +153,12 @@ class JobExecution
     ActiveRecord::Base.clear_active_connections!
 
     ActiveSupport::Notifications.instrument("execute_shell.samson", payload) do
-      payload[:success] = @executor.execute!(*cmds)
+      payload[:success] = if stage.try(:kubernetes)
+        @executor = Kubernetes::DeployExecutor.new(@output, job: @job)
+        @executor.execute!
+      else
+        @executor.execute!(*cmds)
+      end
     end
 
     Samson::Hooks.fire(:after_job_execution, @job, payload[:success], @output)
@@ -165,7 +169,7 @@ class JobExecution
   def setup!(dir)
     locked = lock_project do
       return false unless @repository.setup!(dir, @reference)
-      commit = @repository.commit_from_ref(@reference, length: 40)
+      commit = @repository.commit_from_ref(@reference, length: nil)
       tag = @repository.tag_from_ref(@reference)
       @job.update_git_references!(commit: commit, tag: tag)
     end
@@ -181,10 +185,13 @@ class JobExecution
 
   def commands(dir)
     env = {
-      DEPLOY_URL: @job.full_url,
+      DEPLOY_URL: @job.url,
       DEPLOYER: @job.user.email,
       DEPLOYER_EMAIL: @job.user.email,
       DEPLOYER_NAME: @job.user.name,
+      PROJECT_NAME: @job.project.name,
+      PROJECT_PERMALINK: @job.project.permalink,
+      PROJECT_REPOSITORY: @job.project.repository_url,
       REVISION: @reference,
       TAG: (@job.tag || @job.commit).to_s,
       CACHE_DIR: artifact_cache_dir
@@ -207,7 +214,7 @@ class JobExecution
 
   def lock_project(&block)
     holder = (stage.try(:name) || @job.user.name)
-    callback = proc { |owner| output.write("Waiting for repository while setting it up for #{owner}\n") if Time.now.to_i % 10 == 0 }
+    callback = proc { |owner| @output.write("Waiting for repository while setting it up for #{owner}\n") if Time.now.to_i % 10 == 0 }
     @job.project.with_lock(output: @output, holder: holder, error_callback: callback, timeout: lock_timeout, &block)
   end
 

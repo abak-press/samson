@@ -11,6 +11,11 @@ module Kubernetes
     validates :config_context, presence: true
     validate :test_client_connection
 
+    def watch!
+      Watchers::ClusterPodWatcher.restart_watcher(self)
+      Watchers::ClusterPodErrorWatcher.restart_watcher(self)
+    end
+
     def client
       @client ||= kubeconfig.client_for(config_context)
     end
@@ -43,11 +48,11 @@ module Kubernetes
       false
     end
 
-    private
-
     def kubeconfig
-      @config_file ||= Kubernetes::ClientConfigFile.new(config_filepath)
+      @kubeconfig ||= Kubernetes::ClientConfigFile.new(config_filepath)
     end
+
+    private
 
     def test_client_connection
       if File.exists?(config_filepath)

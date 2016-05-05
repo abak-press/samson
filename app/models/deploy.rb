@@ -45,7 +45,7 @@ class Deploy < ActiveRecord::Base
   end
 
   def short_reference
-    if reference =~ /\A[0-9a-f]{40}\Z/
+    if reference =~ Build::SHA1_REGEX
       reference[0...7]
     else
       reference
@@ -152,10 +152,6 @@ class Deploy < ActiveRecord::Base
   end
 
   def url
-    AppRoutes.url_helpers.project_deploy_path(project, self)
-  end
-
-  def full_url
     AppRoutes.url_helpers.project_deploy_url(project, self)
   end
 
@@ -188,17 +184,17 @@ class Deploy < ActiveRecord::Base
   # commands and deploy groups can change via many different paths,
   # so we validate once a user actually tries to execute the command
   def validate_stage_uses_deploy_groups_properly
-    if DeployGroup.enabled? && stage.deploy_groups.none? && stage.command.include?("$DEPLOY_GROUPS")
+    if DeployGroup.enabled? && stage.deploy_groups.none? && stage.script.include?("$DEPLOY_GROUPS")
       errors.add(:stage, "contains at least one command using the $DEPLOY_GROUPS environment variable, but there are no Deploy Groups associated with this stage.")
     end
   end
 
   def deploy_buddy
-    return unless BuddyCheck.enabled? && stage.production?
+    return unless stage.deploy_requires_approval?
 
     if buddy.nil? && pending?
       "(waiting for a buddy)"
-    elsif buddy.nil? || (user.id == buddy.id)
+    elsif buddy.nil? || job.user_id == buddy_id
       "(without a buddy)"
     else
       "(with #{buddy.name})"

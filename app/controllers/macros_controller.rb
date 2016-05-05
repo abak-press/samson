@@ -1,5 +1,5 @@
 class MacrosController < ApplicationController
-  include ProjectLevelAuthorization
+  include CurrentProject
 
   before_action :authorize_project_deployer!
   before_action :authorize_project_admin!, only: [:new, :create, :edit, :update]
@@ -59,10 +59,6 @@ class MacrosController < ApplicationController
       :name, :reference, :command,
       command_ids: []
     )
-  end
-
-  def command_params
-    params.require(:commands).permit(ids: [])
   end
 
   def find_macro

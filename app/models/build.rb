@@ -1,17 +1,18 @@
 class Build < ActiveRecord::Base
   SHA1_REGEX = /\A[0-9a-f]{40}\Z/i
-  SHA256_REGEX = /\A[0-9a-f]{64}\Z/i
+  SHA256_REGEX = /\A(sha256:)?[0-9a-f]{64}\Z/i
+  DIGEST_REGEX = /\A[\w._-]+\/[\w_-]+@sha256:[0-9a-f]{64}\Z/i
 
   belongs_to :project
   belongs_to :docker_build_job, class_name: 'Job'
   belongs_to :creator, class_name: 'User', foreign_key: 'created_by'
-  has_many :statuses, class_name: 'BuildStatus'
   has_many :deploys
   has_many :releases
 
   validates :project, presence: true
   validates :git_sha, format: SHA1_REGEX, allow_nil: true, uniqueness: true
   validates :docker_image_id, format: SHA256_REGEX, allow_nil: true
+  validates :docker_repo_digest, format: DIGEST_REGEX, allow_nil: true
 
   validate :validate_git_reference, on: :create
 
@@ -23,10 +24,6 @@ class Build < ActiveRecord::Base
 
   def commit_url
     "#{project.repository_homepage}/tree/#{git_sha}"
-  end
-
-  def successful?
-    statuses.all?(&:successful?)
   end
 
   def docker_build_output
@@ -44,7 +41,7 @@ class Build < ActiveRecord::Base
   def create_docker_job
     create_docker_build_job(
       project: project,
-      user_id: created_by || NullUser.new.id,
+      user_id: created_by || NullUser.new(0).id,
       command: '# Build docker image',
       commit:  git_sha,
       tag:     git_ref
@@ -60,13 +57,12 @@ class Build < ActiveRecord::Base
     @docker_image = image
   end
 
-  def file_from_repo(path, ttl: 1.hour)
-    Rails.cache.fetch([self, path], expire_in: ttl) do
-      data = GITHUB.contents(project.github_repo, path: path, ref: git_sha)
-      Base64.decode64(data[:content])
-    end
-  rescue Octokit::NotFound
-    nil
+  def file_from_repo(path)
+    project.repository.file_content path, git_sha
+  end
+
+  def url
+    AppRoutes.url_helpers.project_build_url(project, self)
   end
 
   private
@@ -81,7 +77,7 @@ class Build < ActiveRecord::Base
 
     unless project.repository.last_pulled
       project.with_lock(holder: 'Build reference validation') do
-        project.repository.setup_local_cache!
+        project.repository.update_local_cache!
       end
     end
 

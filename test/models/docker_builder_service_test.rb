@@ -1,5 +1,7 @@
 require_relative '../test_helper'
 
+SingleCov.covered! uncovered: 21
+
 describe DeployService do
   include GitRepoTestHelper
 
@@ -66,7 +68,7 @@ describe DeployService do
       mock_docker_image.expects(:push).multiple_yields(*push_output).once
       mock_docker_image.expects(:tag).once
       service.push_image(nil)
-      assert_includes(service.output_buffer.to_s, 'Frobinating...')
+      assert_includes(service.output.to_s, 'Frobinating...')
       assert_equal('latest', build.docker_ref)
     end
 

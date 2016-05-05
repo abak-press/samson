@@ -2,15 +2,15 @@ require 'soft_deletion'
 require 'digest/md5'
 
 class User < ActiveRecord::Base
-  include HasRole
   include Searchable
+  include HasRole
+
   TIME_FORMATS = ['local', 'utc', 'relative'].freeze
 
   has_soft_deletion default_scope: true
 
   has_many :commands
   has_many :stars
-  has_many :starred_projects, through: :stars, source: :project
   has_many :locks, dependent: :destroy
   has_many :user_project_roles, dependent: :destroy
   has_many :projects, through: :user_project_roles
@@ -23,7 +23,23 @@ class User < ActiveRecord::Base
   scope :search, ->(query) { where("name like ? or email like ?", "%#{query}%", "%#{query}%") }
 
   def starred_project?(project)
-    starred_projects.include?(project)
+    starred_project_ids.include?(project.id)
+  end
+
+  def starred_project_ids
+    Rails.cache.fetch([:starred_projects_ids, id]) do
+      stars.pluck(:project_id)
+    end
+  end
+
+  # returns a scope
+  def administrated_projects
+    scope = Project.order(:name)
+    unless is_admin?
+      allowed = user_project_roles.where(role_id: Role::ADMIN.id).pluck(:project_id)
+      scope = scope.where(id: allowed)
+    end
+    scope
   end
 
   def self.to_csv
@@ -77,11 +93,11 @@ class User < ActiveRecord::Base
   end
 
   def is_admin_for?(project)
-    project_role_for(project).try(:is_admin?)
+    is_admin? || !!project_role_for(project).try(:is_admin?)
   end
 
   def is_deployer_for?(project)
-    project_role_for(project).try(:is_deployer?)
+    is_deployer? || !!project_role_for(project).try(:is_deployer?)
   end
 
   def project_role_for(project)

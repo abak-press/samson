@@ -1,12 +1,14 @@
 class Command < ActiveRecord::Base
-  has_many :stage_command
-  has_many :stages, through: :stage_command
+  has_many :stage_commands
+  has_many :stages, through: :stage_commands
   has_many :macro_commands
   has_many :macros, through: :macro_commands
 
   belongs_to :project
 
   validates :command, presence: true
+
+  after_save :trigger_stage_change
 
   def self.global
     where(project_id: nil)
@@ -37,5 +39,11 @@ class Command < ActiveRecord::Base
 
   def self.usage_ids
     MacroCommand.pluck(:command_id) + StageCommand.pluck(:command_id)
+  end
+
+  private
+
+  def trigger_stage_change
+    stages.each(&:record_script_change)
   end
 end
