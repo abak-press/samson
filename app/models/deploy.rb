@@ -102,6 +102,12 @@ class Deploy < ActiveRecord::Base
     includes(:job).where(jobs: { status: Job::ACTIVE_STATUSES })
   end
 
+  def self.active_count
+    Rails.cache.fetch('deploy_active_count', expires_in: 10.seconds) do
+      active.count
+    end
+  end
+
   def self.pending
     includes(:job).where(jobs: { status: 'pending' })
   end
@@ -127,28 +133,12 @@ class Deploy < ActiveRecord::Base
     joins(:job).where(jobs: { status: 'pending'} ).where("jobs.created_at < ?", threshold)
   end
 
-  def csv_buddy
-    if not (stage.deploy_requires_approval?)
-      "Not Required"
-    elsif buddy.nil? && pending?
-      "Pending"
-    elsif buddy.nil?
-      "None"
-    elsif (user.id == buddy.id)
-      "Bypassed"
-    else
-      buddy.name
-    end
+  def buddy_name
+    user.id == buddy_id ? "bypassed" : buddy.try(:name)
   end
 
-  def self.to_csv
-    @deploys = Deploy.joins(:stage).all()
-    CSV.generate do |csv|
-      csv << ["Deploy Number", "Project Name", "Deploy Sumary", "Deploy Updated", "Deploy Created", "Deployer Name", "Buddy Name", "Production Flag", Deploy.joins(:stage).count.to_s + " Deploys"]
-      @deploys.find_each do |deploy|
-        csv << [deploy.id, deploy.project.name, deploy.summary, deploy.updated_at, deploy.start_time, deploy.job.user.name, deploy.csv_buddy, deploy.stage.production]
-      end
-    end
+  def buddy_email
+    user.id == buddy_id ? "bypassed" : buddy.try(:email)
   end
 
   def url

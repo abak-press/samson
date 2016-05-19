@@ -75,20 +75,18 @@ describe DeploysController do
       end
     end
 
-    describe "a GET to :active_count" do
-      before do
-        stage.create_deploy(admin, {reference: 'reference'})
-        get :active_count, project_id: project_id
-      end
-
-      with_and_without_project do
-        it "renders json" do
-          assert_equal "application/json", @response.content_type
-          assert_response :ok
-          @response.body.must_equal "{\"deploy_count\":1}"
-        end
-      end
+  describe "a GET to :active_count" do
+    before do
+      stage.create_deploy(admin, {reference: 'reference'})
+      get :active_count
     end
+
+    it "renders json" do
+      assert_equal "application/json", @response.content_type
+      assert_response :ok
+      @response.body.must_equal "1"
+    end
+  end
 
     describe "a GET to :changeset" do
       before do
@@ -164,12 +162,6 @@ describe DeploysController do
 
       it "it renders json" do
         get :search, format: "json"
-        assert_response :ok
-      end
-
-      it "renders csv" do
-        get :search, format: "csv"
-        assert_equal "text/csv", @response.content_type
         assert_response :ok
       end
 
@@ -362,7 +354,7 @@ describe DeploysController do
         before do
           deploy_service.expects(:stop!).never
           Deploy.any_instance.stubs(:started_by?).returns(false)
-          User.any_instance.stubs(:is_admin?).returns(false)
+          User.any_instance.stubs(:admin?).returns(false)
 
           delete :destroy, project_id: project.to_param, id: deploy.to_param
         end

@@ -9,12 +9,12 @@
           <ul class="dropdown-menu">
             <li>
               <a class="padding-sm">
-                <input id="project_search" type="search" ng-model="projectSearchQuery" ng-trim="false" handle-dropdown-selection class="form-control input-block" placeholder="Search projects">
+                <input id="project_search" type="search" handle-dropdown-selection class="filter-list form-control input-block" placeholder="Search projects" data-target=".filtered-projects">
               </a>
             </li>
             <li class="divider"></li>
             <% Project.ordered_for_user(current_user).each do |project| %>
-              <li filter-by="projectSearchQuery">
+              <li class="filtered-projects">
                 <%= link_to project do %>
                   <% starred = current_user.starred_project?(project) %>
                   <span class="glyphicon <%= 'glyphicon-star' if starred %>">
@@ -46,15 +46,20 @@
         <li class="current-deploys <%= 'active' if current_page?(controller: '/deploys', action: 'active') %>" ng-controller="currentDeployBadgeCtrl">
           <%= link_to active_deploys_path do %>
             Deploying
-            <%= content_tag(:span, '{{ currentActiveDeploys }}', class: 'badge badge-deploys', style: 'display: none', id: 'currentDeploysBadge') %>
+            <%= content_tag :span, '{{ currentActiveDeploys }}',
+                class: 'badge badge-deploys',
+                style: 'display: none',
+                id: 'currentDeploysBadge',
+                data: {count: Deploy.active_count}
+            %>
           <% end %>
         </li>
       <% end %>
 
-      <% if current_user.try(:is_admin?) %>
-        <li class="dropdown <%= 'active' if request.path.starts_with?('/admin') %>">
-          <a href="#" class="dropdown-toggle" data-toggle="dropdown">Admin <b class="caret"></b></a>
-          <ul class="dropdown-menu">
+      <li class="dropdown <%= 'active' if request.path.starts_with?('/admin') %>">
+        <a href="#" class="dropdown-toggle" data-toggle="dropdown">Manage <b class="caret"></b></a>
+        <ul class="dropdown-menu">
+          <% if current_user.try(:admin?) %>
             <% if DeployGroup.enabled? %>
               <li><%= link_to "Environments", admin_environments_path %></li>
               <li><%= link_to "Deploy Groups", admin_deploy_groups_path %></li>
@@ -62,11 +67,15 @@
             <li><%= link_to "Projects", admin_projects_path %></li>
             <li><%= link_to "Commands", admin_commands_path %></li>
             <li><%= link_to "Users", admin_users_path %></li>
-            <li><%= link_to "Secrets", admin_secrets_path %></li>
             <%= Samson::Hooks.render_views(:admin_menu, self) %>
-          </ul>
-        </li>
-      <% end %>
+            <li class="divider"></li>
+          <% end %>
+          <% if current_user.try(:deployer?) %>
+            <li><%= link_to "Secrets", admin_secrets_path %></li>
+          <% end %>
+          <li><%= link_to "Reports", csv_exports_path %></li>
+        </ul>
+      </li>
     </ul>
 
     <ul class="nav navbar-nav pull-right">

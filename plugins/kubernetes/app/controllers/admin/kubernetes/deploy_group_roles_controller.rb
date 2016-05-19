@@ -4,7 +4,8 @@ class Admin::Kubernetes::DeployGroupRolesController < ApplicationController
   before_action :authorize_project_admin!, only: [:create, :edit, :update, :destroy]
 
   def new
-    @deploy_group_role = ::Kubernetes::DeployGroupRole.new
+    attributes = (params[:kubernetes_deploy_group_role] ? deploy_group_role_params : {})
+    @deploy_group_role = ::Kubernetes::DeployGroupRole.new(attributes)
   end
 
   def create
@@ -27,7 +28,7 @@ class Admin::Kubernetes::DeployGroupRolesController < ApplicationController
   end
 
   def update
-    @deploy_group_role.assign_attributes(deploy_group_role_params.except(:project_id, :deploy_group_id))
+    @deploy_group_role.assign_attributes(deploy_group_role_params.except(:project_id, :deploy_group_id, :kubernetes_role_id))
     if @deploy_group_role.save
       redirect_to [:admin , @deploy_group_role]
     else
@@ -56,7 +57,7 @@ class Admin::Kubernetes::DeployGroupRolesController < ApplicationController
 
   def deploy_group_role_params
     params.require(:kubernetes_deploy_group_role).permit(
-      :name, :ram, :cpu, :replicas, :project_id, :deploy_group_id
+      :kubernetes_role_id, :ram, :cpu, :replicas, :project_id, :deploy_group_id
     )
   end
 end

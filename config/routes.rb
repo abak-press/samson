@@ -17,7 +17,6 @@ Samson::Application.routes.draw do
     resources :deploys, only: [:index, :show, :destroy] do
       collection do
         get :active
-        get :active_count
       end
 
       member do
@@ -86,6 +85,7 @@ Samson::Application.routes.draw do
   get '/login', to: 'sessions#new'
   get '/logout', to: 'sessions#destroy'
 
+  resources :csv_exports, only: [ :index, :new, :create, :show ]
   resources :stars, only: [:create, :destroy]
   resources :dashboards, only: [:show] do
     member do

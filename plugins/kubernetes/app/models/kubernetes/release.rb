@@ -7,6 +7,7 @@ module Kubernetes
     belongs_to :user
     belongs_to :build
     belongs_to :project
+    belongs_to :deploy
     has_many :release_docs, class_name: 'Kubernetes::ReleaseDoc', foreign_key: 'kubernetes_release_id'
     has_many :deploy_groups, through: :release_docs
 
@@ -30,19 +31,8 @@ module Kubernetes
       }
     end
 
-    def release_metadata
-      {
-        release_id: id.to_s,
-        project_id: project_id.to_s
-      }
-    end
-
     def user
       super || NullUser.new(user_id)
-    end
-
-    def nested_error_messages
-      errors.full_messages + release_docs.flat_map(&:nested_error_messages)
     end
 
     def docs_by_role
@@ -56,20 +46,10 @@ module Kubernetes
       Kubernetes::Release.transaction do
         release = create(params.except(:deploy_groups))
         if release.persisted?
-          release.create_release_docs(params)
+          release.send :create_release_docs, params
         end
         release
       end
-    end
-
-    # Creates a ReleaseDoc per each DeployGroup and Role combination.
-    def create_release_docs(params)
-      params[:deploy_groups].to_a.each do |dg|
-        dg[:roles].to_a.each do |role|
-          release_docs.create!(deploy_group_id: dg[:id], kubernetes_role_id: role[:id], replica_target: role[:replicas])
-        end
-      end
-      raise 'No Kubernetes::ReleaseDoc has been created' if release_docs.empty?
     end
 
     def release_doc_for(deploy_group_id, role_id)
@@ -102,6 +82,22 @@ module Kubernetes
     end
 
     private
+
+    # Creates a ReleaseDoc per each DeployGroup and Role combination.
+    def create_release_docs(params)
+      params.fetch(:deploy_groups).each do |dg|
+        dg.fetch(:roles).to_a.each do |role|
+          release_docs.create!(
+            deploy_group_id: dg.fetch(:id),
+            kubernetes_role_id: role.fetch(:id),
+            replica_target: role.fetch(:replicas),
+            cpu: role.fetch(:cpu),
+            ram: role.fetch(:ram)
+          )
+        end
+      end
+      raise 'No Kubernetes::ReleaseDoc has been created' if release_docs.empty?
+    end
 
     def validate_docker_image_in_registry
       if build && build.docker_repo_digest.blank? && build.docker_ref.blank?

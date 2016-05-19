@@ -14,13 +14,22 @@ class User < ActiveRecord::Base
   has_many :locks, dependent: :destroy
   has_many :user_project_roles, dependent: :destroy
   has_many :projects, through: :user_project_roles
+  has_many :csv_exports, dependent: :destroy
 
   validates :role_id, inclusion: { in: Role.all.map(&:id) }
 
   before_create :set_token
   validates :time_format, inclusion: { in: TIME_FORMATS }
 
-  scope :search, ->(query) { where("name like ? or email like ?", "%#{query}%", "%#{query}%") }
+  scope :search, ->(query) {
+    return self if query.blank?
+    query = ActiveRecord::Base.send(:sanitize_sql_like, query)
+    where("name LIKE ? OR email LIKE ?", "%#{query}%", "%#{query}%")
+  }
+  scope :with_role, -> (role_id, project_id) {
+    joins("LEFT OUTER JOIN user_project_roles ON users.id = user_project_roles.user_id AND user_project_roles.project_id = #{project_id.to_i}").
+      where('users.role_id >= ? OR user_project_roles.role_id >= ?', role_id, role_id)
+  }
 
   def starred_project?(project)
     starred_project_ids.include?(project.id)
@@ -35,7 +44,7 @@ class User < ActiveRecord::Base
   # returns a scope
   def administrated_projects
     scope = Project.order(:name)
-    unless is_admin?
+    unless admin?
       allowed = user_project_roles.where(role_id: Role::ADMIN.id).pluck(:project_id)
       scope = scope.where(id: allowed)
     end
@@ -92,12 +101,12 @@ class User < ActiveRecord::Base
     "https://www.gravatar.com/avatar/#{md5}"
   end
 
-  def is_admin_for?(project)
-    is_admin? || !!project_role_for(project).try(:is_admin?)
+  def admin_for?(project)
+    admin? || !!project_role_for(project).try(:admin?)
   end
 
-  def is_deployer_for?(project)
-    is_deployer? || !!project_role_for(project).try(:is_deployer?)
+  def deployer_for?(project)
+    deployer? || !!project_role_for(project).try(:deployer?)
   end
 
   def project_role_for(project)

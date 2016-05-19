@@ -176,55 +176,55 @@ describe User do
 
   describe "#super_admin?" do
     it "is true for a super admin" do
-      users(:super_admin).must_be(:is_super_admin?)
+      users(:super_admin).must_be(:super_admin?)
     end
 
     it "is false for an admin" do
-      users(:admin).wont_be(:is_super_admin?)
+      users(:admin).wont_be(:super_admin?)
     end
 
     it "is false for deployer" do
-      users(:deployer).wont_be(:is_super_admin?)
+      users(:deployer).wont_be(:super_admin?)
     end
 
     it "is false for a viewer" do
-      User.new.wont_be(:is_super_admin?)
+      User.new.wont_be(:super_admin?)
     end
   end
 
   describe "#deployer?" do
     it "is true for a super_admin" do
-      users(:super_admin).is_deployer?.must_equal(true)
+      users(:super_admin).deployer?.must_equal(true)
     end
 
     it "is true for an admin" do
-      users(:admin).is_admin?.must_equal(true)
+      users(:admin).admin?.must_equal(true)
     end
 
     it "is false for a viewer" do
-      User.new.wont_be(:is_deployer?)
+      User.new.wont_be(:deployer?)
     end
   end
 
   describe "#viewer?" do
     it "is true for a super_admin" do
-      users(:super_admin).is_viewer?.must_equal(true)
+      users(:super_admin).viewer?.must_equal(true)
     end
 
     it "is true for an admin" do
-      users(:admin).is_viewer?.must_equal(true)
+      users(:admin).viewer?.must_equal(true)
     end
 
     it "is true for a deployer" do
-      users(:deployer).is_viewer?.must_equal(true)
+      users(:deployer).viewer?.must_equal(true)
     end
 
     it "is true for everyone else and by default" do
-      User.new.is_viewer?.must_equal(true)
+      User.new.viewer?.must_equal(true)
     end
   end
 
-  describe "search_for scope" do
+  describe ".search" do
 
     let!(:a_singular_user) do
       User.create!(name: 'FindMe', email: 'find.me@example.org')
@@ -242,6 +242,10 @@ describe User do
       User.search('find.me@example.org').must_equal [a_singular_user]
     end
 
+    it 'sanitizes query values' do
+      User.search('%').must_equal []
+    end
+
     it 'finds a single user using a partial match query' do
       User.search('find').must_equal [a_singular_user]
     end
@@ -254,14 +258,57 @@ describe User do
       User.search('does not exist').count.must_equal(0)
     end
 
-    it 'must return all results with an empty query' do
+    it 'returns all results with an empty query' do
       User.search('').count.must_equal(User.count)
     end
 
-    it 'must return all results with a nil query' do
+    it 'returns all results with a nil query' do
       User.search(nil).count.must_equal(User.count)
     end
+  end
 
+  describe ".with_role" do
+    let(:project) { projects(:test) }
+    let(:deployer_list) { ["Admin", "Deployer", "Deployer Project Admin", "DeployerBuddy", "Project Deployer", "Super Admin"] }
+
+    it "filters everything when asking for a unreachable role" do
+      User.with_role(Role::SUPER_ADMIN.id + 1, project.id).size.must_equal 0
+    end
+
+    it "filters nothing when asking for anything" do
+      User.with_role(Role::VIEWER.id, project.id).size.must_equal User.count
+    end
+
+    it 'filters by deployer' do
+      User.with_role(Role::DEPLOYER.id, project.id).map(&:name).sort.must_equal \
+        deployer_list
+    end
+
+    it 'filters by admin' do
+      User.with_role(Role::ADMIN.id, project.id).map(&:name).sort.must_equal \
+        ["Admin", "Deployer Project Admin", "Super Admin"]
+    end
+
+    describe "with another project" do
+      let(:other) do
+        p = project.dup
+        p.name = 'xxxxx'
+        p.save!(validate: false)
+        p
+      end
+
+      it 'does not show duplicate when multiple roles exist' do
+        UserProjectRole.create!(user: users(:project_admin), project: other, role_id: Role::ADMIN.id)
+        User.with_role(Role::DEPLOYER.id, project.id).map(&:name).sort.must_equal \
+          deployer_list
+      end
+
+      it 'shows users that only have a role on different projects' do
+        UserProjectRole.create!(user: users(:deployer), project: other, role_id: Role::ADMIN.id)
+        User.with_role(Role::DEPLOYER.id, project.id).map(&:name).sort.must_equal \
+          deployer_list
+      end
+    end
   end
 
   describe 'soft delete!' do
@@ -278,37 +325,37 @@ describe User do
 
   describe "#admin_for_project?" do
     it "is true for a user that has been granted the role of project admin" do
-      users(:project_admin).is_admin_for?(projects(:test)).must_equal(true)
+      users(:project_admin).admin_for?(projects(:test)).must_equal(true)
     end
 
     it "is true for a user that are admins" do
-      users(:admin).is_admin_for?(projects(:test)).must_equal(true)
-      users(:super_admin).is_admin_for?(projects(:test)).must_equal(true)
+      users(:admin).admin_for?(projects(:test)).must_equal(true)
+      users(:super_admin).admin_for?(projects(:test)).must_equal(true)
     end
 
     it "is false for users that have not been granted the role of project admin" do
-      users(:viewer).is_admin_for?(projects(:test)).must_equal(false)
-      users(:deployer).is_admin_for?(projects(:test)).must_equal(false)
+      users(:viewer).admin_for?(projects(:test)).must_equal(false)
+      users(:deployer).admin_for?(projects(:test)).must_equal(false)
     end
   end
 
   describe "#deployer_for_project?" do
     it "is true for a user that has been granted the role of project deployer" do
-      users(:project_deployer).is_deployer_for?(projects(:test)).must_equal(true)
+      users(:project_deployer).deployer_for?(projects(:test)).must_equal(true)
     end
 
     it "is true for a user that has been granted the role of project admin" do
-      users(:project_admin).is_deployer_for?(projects(:test)).must_equal(true)
+      users(:project_admin).deployer_for?(projects(:test)).must_equal(true)
     end
 
     it "is false for users that have not been granted the roles of project deployer or project admin" do
-      users(:viewer).is_deployer_for?(projects(:test)).must_equal(false)
+      users(:viewer).deployer_for?(projects(:test)).must_equal(false)
     end
 
     it "is true for deployers" do
-      users(:deployer).is_deployer_for?(projects(:test)).must_equal(true)
-      users(:admin).is_deployer_for?(projects(:test)).must_equal(true)
-      users(:super_admin).is_deployer_for?(projects(:test)).must_equal(true)
+      users(:deployer).deployer_for?(projects(:test)).must_equal(true)
+      users(:admin).deployer_for?(projects(:test)).must_equal(true)
+      users(:super_admin).deployer_for?(projects(:test)).must_equal(true)
     end
   end
 
