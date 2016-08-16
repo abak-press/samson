@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'zendesk_api'
 require 'net/http/persistent'
 
@@ -34,7 +35,7 @@ class ZendeskNotification
 
   private
 
-  # Matches Zendesk ticket number in commit messages 
+  # Matches Zendesk ticket number in commit messages
   def zendesk_tickets(commits)
     commits.map { |c| c.summary[/zd#?(\d+)/i, 1] }.compact.map!(&:to_i).uniq
   end

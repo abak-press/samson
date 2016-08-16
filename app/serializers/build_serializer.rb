@@ -1,7 +1,9 @@
+# frozen_string_literal: true
 class BuildSerializer < ActiveModel::Serializer
   include DateTimeHelper
 
-  attributes :id, :label, :git_sha, :git_ref, :docker_image_id, :docker_ref, :docker_repo_digest, :docker_status, :created_at
+  attributes :id, :label, :git_sha, :git_ref, :docker_image_id, :docker_ref,
+    :docker_repo_digest, :docker_status, :created_at
 
   has_one :project
 

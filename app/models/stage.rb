@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class Stage < ActiveRecord::Base
   include Permalinkable
   include HasCommands
@@ -25,6 +26,7 @@ class Stage < ActiveRecord::Base
   validates :name, presence: true, uniqueness: { scope: [:project, :deleted_at] }
 
   before_create :ensure_ordering
+  after_destroy :destroy_deploy_groups_stages
 
   def self.reset_order(new_order)
     transaction do
@@ -94,7 +96,7 @@ class Stage < ActiveRecord::Base
 
   def create_deploy(user, attributes = {})
     deploys.create(attributes.merge(release: !no_code_deployed)) do |deploy|
-      deploy.build_job(project: project, user: user, command: script)
+      deploy.build_job(project: project, user: user, command: script, commit: deploy.reference)
     end
   end
 
@@ -124,6 +126,8 @@ class Stage < ActiveRecord::Base
     update_github_pull_requests
   end
 
+  # this logic is replicated in SQL inside of app/jobs/csv_export_job.rb#filter_deploys for report filtering
+  # update the SQL query as well when editing this method
   def production?
     if DeployGroup.enabled?
       deploy_groups.empty? ? super : deploy_groups.any? { |deploy_group| deploy_group.environment.production? }
@@ -173,6 +177,10 @@ class Stage < ActiveRecord::Base
     super
   end
 
+  def deploy_group_names
+    DeployGroup.enabled? ? deploy_groups.select(:name).sort_by(&:natural_order).map(&:name) : []
+  end
+
   private
 
   def permalink_base
@@ -191,5 +199,10 @@ class Stage < ActiveRecord::Base
   # overwrites papertrail to record script
   def object_attrs_for_paper_trail(attributes)
     super(attributes.merge('script' => script))
+  end
+
+  # DeployGroupsStage has no ids so the default dependent: :destroy fails
+  def destroy_deploy_groups_stages
+    DeployGroupsStage.where(stage_id: id).delete_all
   end
 end

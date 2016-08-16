@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: 6
@@ -119,7 +120,7 @@ describe JobExecution do
   it "tests additional exports hook" do
     job.update(command: 'env | sort')
 
-    Samson::Hooks.callback :job_additional_vars do |job|
+    Samson::Hooks.callback :job_additional_vars do |_job|
       { ADDITIONAL_EXPORT: "yes" }
     end
 
@@ -136,7 +137,8 @@ describe JobExecution do
     lines.must_include "DEPLOYER=jdoe@test.com"
     lines.must_include "DEPLOYER_EMAIL=jdoe@test.com"
     lines.must_include "DEPLOYER_NAME=John Doe"
-    lines.must_include "REVISION=master"
+    lines.must_include "REFERENCE=master"
+    lines.must_include "REVISION=#{job.commit}"
     lines.must_include "TAG=v1"
     lines.must_include "FOO=bar"
   end
@@ -225,8 +227,9 @@ describe JobExecution do
   end
 
   it 'can access secrets' do
-    create_secret "production/#{project.permalink}/group/bar"
-    job.update(command: "echo '#{"secret://production/#{project.permalink}/group/bar"}'")
+    id = "global/#{project.permalink}/global/bar"
+    create_secret id
+    job.update(command: "echo 'secret://bar'")
     execute_job("master")
     assert_equal 'MY-SECRET', last_line_of_output
   end
@@ -256,7 +259,15 @@ describe JobExecution do
   end
 
   describe "#start!" do
+    def with_hidden_errors
+      Rails.application.config.consider_all_requests_local = false
+      yield
+    ensure
+      Rails.application.config.consider_all_requests_local = true
+    end
+
     let(:execution) { JobExecution.new('master', job) }
+    let(:model_file) { 'app/models/job_execution.rb' }
 
     it "runs a job" do
       execution.start!
@@ -265,12 +276,46 @@ describe JobExecution do
       job.reload.output.must_include "cat foo"
     end
 
-    it "records exceptions" do
+    it "records exceptions to output" do
+      Airbrake.expects(:notify)
       job.expects(:run!).raises("Oh boy")
       execution.start!
       execution.wait!
       execution.output.to_s.must_include "JobExecution failed: Oh boy"
-      job.reload.output.must_include "JobExecution failed: Oh boy"
+      job.reload.output.must_include "JobExecution failed: Oh boy" # shows error message
+      job.reload.output.must_include model_file # shows important backtrace
+      job.reload.output.wont_include 'test/models/job_execution_test.rb' # hides unimportant backtrace
+    end
+
+    it "does not spam airbrake on user erorrs" do
+      Airbrake.expects(:notify).never
+      job.expects(:run!).raises(Samson::Hooks::UserError, "Oh boy")
+      execution.start!
+      execution.wait!
+      execution.output.to_s.must_include "JobExecution failed: Oh boy"
+    end
+
+    it "does not show error backtraces in production to hide internals" do
+      with_hidden_errors do
+        Airbrake.expects(:notify)
+        job.expects(:run!).raises("Oh boy")
+        execution.start!
+        execution.wait!
+        execution.output.to_s.must_include "JobExecution failed: Oh boy"
+        execution.output.to_s.wont_include model_file
+      end
+    end
+
+    it "shows airbrake error location" do
+      with_hidden_errors do
+        Airbrake.expects(:notify).returns("12345")
+        Airbrake.expects(:configuration).returns(stub(user_information: 'href="http://foo.com/{{error_id}}"'))
+        job.expects(:run!).raises("Oh boy")
+        execution.start!
+        execution.wait!
+        execution.output.to_s.must_include "JobExecution failed: Oh boy"
+        execution.output.to_s.must_include "http://foo.com/12345"
+      end
     end
   end
 
@@ -285,7 +330,8 @@ describe JobExecution do
 
     it "stops the execution with kill if job has already been interrupted" do
       begin
-        old, JobExecution.stop_timeout = JobExecution.stop_timeout, 0
+        old = JobExecution.stop_timeout
+        JobExecution.stop_timeout = 0
         execution.start!
         TerminalExecutor.any_instance.expects(:stop!).with('INT')
         TerminalExecutor.any_instance.expects(:stop!).with('KILL')

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -96,28 +97,29 @@ describe GitRepository do
   end
 
   describe "#commit_from_ref" do
-    it 'returns the short commit id' do
+    it 'returns the full commit id' do
       create_repo_with_tags
       repository.clone!
-      repository.commit_from_ref('master').must_match /^[0-9a-f]{7}$/
+      repository.commit_from_ref('master').must_match /^[0-9a-f]{40}$/
     end
 
-    it 'returns the full commit id with nil length' do
+    it 'returns the full commit id when given a short commit id' do
       create_repo_with_tags
       repository.clone!
-      repository.commit_from_ref('master', length: nil).must_match /^[0-9a-f]{40}$/
+      short_commit_id = (execute_on_remote_repo "git rev-parse --short HEAD").strip
+      repository.commit_from_ref(short_commit_id).must_match /^[0-9a-f]{40}$/
     end
 
     it 'returns nil if ref does not exist' do
       create_repo_with_tags
       repository.clone!
-      repository.commit_from_ref('NOT A VALID REF', length: nil).must_be_nil
+      repository.commit_from_ref('NOT A VALID REF').must_be_nil
     end
 
     it 'returns the commit of a branch' do
       create_repo_with_an_additional_branch('my_branch')
       repository.clone!(mirror: true)
-      repository.commit_from_ref('my_branch').must_match /^[0-9a-f]{7}$/
+      repository.commit_from_ref('my_branch').must_match /^[0-9a-f]{40}$/
     end
 
     it 'returns the commit of a named tag' do
@@ -132,16 +134,16 @@ describe GitRepository do
       SHELL
 
       repository.clone!(mirror: true)
-      sha = repository.commit_from_ref('annotated_tag', length: 40)
+      sha = repository.commit_from_ref('annotated_tag')
       sha.must_match /^[0-9a-f]{40}$/
-      repository.commit_from_ref('test_branch', length: 40).must_equal(sha)
+      repository.commit_from_ref('test_branch').must_equal(sha)
     end
 
     it 'prevents script insertion attacks' do
       create_repo_without_tags
       repository.clone!
-      repository.commit_from_ref('master ; rm foo', length: nil).must_be_nil
-      assert File.exists?(File.join(repository.repo_cache_dir, 'foo'))
+      repository.commit_from_ref('master ; rm foo').must_be_nil
+      assert File.exist?(File.join(repository.repo_cache_dir, 'foo'))
     end
   end
 
@@ -162,13 +164,22 @@ describe GitRepository do
       repository.tag_from_ref('master~').must_equal 'v1'
       repository.tag_from_ref('master').must_match /^v1-1-g[0-9a-f]{7}$/
     end
+
+    it 'returns tag when it is ambiguous' do
+      create_repo_with_tags
+      execute_on_remote_repo <<-SHELL
+        git checkout -b v1
+      SHELL
+      repository.clone!
+      repository.tag_from_ref('v1').must_equal 'v1'
+    end
   end
 
   describe "#tags" do
     it 'returns the tags repository' do
       create_repo_with_tags
       repository.clone!(mirror: true)
-      repository.tags.to_a.must_equal %w(v1 )
+      repository.tags.to_a.must_equal ["v1"]
     end
 
     it 'returns an empty set of tags' do
@@ -182,7 +193,7 @@ describe GitRepository do
     it 'returns the branches of the repository' do
       create_repo_with_an_additional_branch
       repository.clone!(mirror: true)
-      repository.branches.to_a.must_equal %w(master test_user/test_branch)
+      repository.branches.to_a.must_equal %w[master test_user/test_branch]
     end
   end
 
@@ -238,7 +249,7 @@ describe GitRepository do
       repository.clone!
     end
 
-    let(:sha) { repository.commit_from_ref('master', length: nil) }
+    let(:sha) { repository.commit_from_ref('master') }
 
     it 'finds content' do
       repository.file_content('foo', sha).must_equal "monkey"
@@ -266,6 +277,18 @@ describe GitRepository do
     it "updates when sha is missing" do
       repository.expects(:update!)
       repository.file_content('foo', 'a' * 40).must_equal nil
+    end
+
+    describe "pull: false" do
+      before { repository.expects(:update!).never }
+
+      it "finds known" do
+        repository.file_content('foo', 'HEAD', pull: false).must_equal 'monkey'
+      end
+
+      it "ignores unknown" do
+        repository.file_content('foo', 'aaaaaaaaa', pull: false).must_equal nil
+      end
     end
   end
 end

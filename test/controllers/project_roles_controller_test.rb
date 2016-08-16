@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -14,7 +15,7 @@ describe ProjectRolesController do
   end
 
   as_a_project_admin do
-    describe "a POST to #create" do
+    describe "#create" do
       def create(role_id)
         post :create, project_id: project, user_id: new_admin.id, role_id: role_id
       end
@@ -40,7 +41,7 @@ describe ProjectRolesController do
         new_admin.user_project_roles.create!(role_id: Role::DEPLOYER.id, project: project)
         create ''
         assert_response :success
-        refute new_admin.user_project_roles.first
+        refute new_admin.reload.user_project_roles.first
       end
 
       it 'does nothing when setting from None to None' do

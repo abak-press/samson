@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -9,7 +10,7 @@ describe BuildsController do
   let(:project_repo_url) { repo_temp_dir }
   let(:project) { projects(:test).tap { |p| p.repository_url = project_repo_url } }
 
-  let(:default_build) { project.builds.create!(label: 'master branch', git_ref: 'master') }
+  let(:default_build) { project.builds.create!(label: 'master branch', git_ref: 'master', git_sha: 'a' * 40) }
 
   before do
     create_repo_with_an_additional_branch('test_branch')
@@ -38,8 +39,8 @@ describe BuildsController do
       end
 
       it 'displays basic build info' do
-        project.builds.create!(label: 'test branch', git_ref: 'test_branch')
-        project.builds.create!(label: 'master branch', git_ref: 'master')
+        project.builds.create!(label: 'test branch', git_ref: 'test_branch', git_sha: 'a' * 40)
+        project.builds.create!(label: 'master branch', git_ref: 'master', git_sha: 'b' * 40)
         get :index, project_id: project.to_param
         assert_response :ok
         @response.body.must_include 'test branch'
@@ -67,7 +68,13 @@ describe BuildsController do
       end
 
       def create
-        post :create, project_id: project.to_param, build: { label: 'Test creation', git_ref: 'master', description: 'hi there' }, build_image: build_image, format: format
+        post(
+          :create,
+          project_id: project.to_param,
+          build: { label: 'Test creation', git_ref: 'master', description: 'hi there' },
+          build_image: build_image,
+          format: format
+        )
       end
 
       let(:git_sha) { '0123456789012345678901234567890123456789' }
@@ -92,7 +99,11 @@ describe BuildsController do
 
         it 'can create a build with same git_ref as previous' do
           create
-          post :create, project_id: project.to_param, build: { label: 'Test creation 2', git_ref: 'master', description: 'hi there' }
+          post(
+            :create,
+            project_id: project.to_param,
+            build: { label: 'Test creation 2', git_ref: 'master', description: 'hi there' }
+          )
           Build.last.label.must_equal 'Test creation 2'
         end
 

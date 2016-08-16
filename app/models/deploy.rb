@@ -1,10 +1,11 @@
+# frozen_string_literal: true
 class Deploy < ActiveRecord::Base
   has_soft_deletion default_scope: true
 
   belongs_to :stage, touch: true
   belongs_to :build
   belongs_to :job
-  belongs_to :buddy, class_name: 'User'
+  belongs_to :buddy, -> { unscope(where: "deleted_at") }, class_name: 'User'
 
   default_scope { order(created_at: :desc, id: :desc) }
 
@@ -25,11 +26,6 @@ class Deploy < ActiveRecord::Base
 
   def summary
     "#{job.user.name} #{deploy_buddy} #{summary_action} #{short_reference} to #{stage.name}"
-  end
-
-  def summary_for_process
-    t = (Time.now.to_i - start_time.to_i)
-    "ProcessID: #{job.pid} Running: #{t} seconds"
   end
 
   def summary_for_timeline
@@ -69,11 +65,7 @@ class Deploy < ActiveRecord::Base
   end
 
   def buddy
-    if buddy_id
-      super || NullUser.new(buddy_id)
-    else
-      nil
-    end
+    super || NullUser.new(buddy_id) if buddy_id
   end
 
   def bypassed_approval?
@@ -94,7 +86,7 @@ class Deploy < ActiveRecord::Base
   end
 
   def pending_start!
-    touch # hack: refresh is immediate with update
+    touch # HACK: refresh is immediate with update
     DeployService.new(user).confirm_deploy!(self)
   end
 
@@ -109,19 +101,19 @@ class Deploy < ActiveRecord::Base
   end
 
   def self.pending
-    includes(:job).where(jobs: { status: 'pending' })
+    joins(:job).where(jobs: { status: 'pending' })
   end
 
   def self.running
-    includes(:job).where(jobs: { status: 'running' })
+    joins(:job).where(jobs: { status: 'running' })
   end
 
   def self.successful
-    includes(:job).where(jobs: { status: 'succeeded' })
+    joins(:job).where(jobs: { status: 'succeeded' })
   end
 
   def self.finished_naturally
-    includes(:job).where(jobs: { status: ['succeeded', 'failed'] })
+    joins(:job).where(jobs: { status: ['succeeded', 'failed'] })
   end
 
   def self.prior_to(deploy)
@@ -130,7 +122,7 @@ class Deploy < ActiveRecord::Base
 
   def self.expired
     threshold = BuddyCheck.time_limit.minutes.ago
-    joins(:job).where(jobs: { status: 'pending'} ).where("jobs.created_at < ?", threshold)
+    joins(:job).where(jobs: { status: 'pending'}).where("jobs.created_at < ?", threshold)
   end
 
   def buddy_name
@@ -142,7 +134,23 @@ class Deploy < ActiveRecord::Base
   end
 
   def url
-    AppRoutes.url_helpers.project_deploy_url(project, self)
+    Rails.application.routes.url_helpers.project_deploy_url(project, self)
+  end
+
+  def self.csv_header
+    [
+      "Deploy Number", "Project Name", "Deploy Summary", "Deploy Commit", "Deploy Status", "Deploy Updated",
+      "Deploy Created", "Deployer Name", "Deployer Email", "Buddy Name", "Buddy Email", "Stage Name",
+      "Production Flag", "Code deployed", "Project Deleted On", "Deploy Groups"
+    ]
+  end
+
+  def csv_line
+    [
+      id, project.name, summary, commit, job.status, updated_at, start_time, user.try(:name), user.try(:email),
+      buddy_name, buddy_email, stage.name, stage.production?, !stage.no_code_deployed, project.deleted_at,
+      stage.deploy_group_names.join('|')
+    ]
   end
 
   private
@@ -175,7 +183,11 @@ class Deploy < ActiveRecord::Base
   # so we validate once a user actually tries to execute the command
   def validate_stage_uses_deploy_groups_properly
     if DeployGroup.enabled? && stage.deploy_groups.none? && stage.script.include?("$DEPLOY_GROUPS")
-      errors.add(:stage, "contains at least one command using the $DEPLOY_GROUPS environment variable, but there are no Deploy Groups associated with this stage.")
+      errors.add(
+        :stage,
+        "contains at least one command using the $DEPLOY_GROUPS environment variable," \
+        " but there are no Deploy Groups associated with this stage."
+      )
     end
   end
 
@@ -192,6 +204,6 @@ class Deploy < ActiveRecord::Base
   end
 
   def trim_reference
-    self.reference.strip! if self.reference.presence
+    reference.strip! if reference.presence
   end
 end

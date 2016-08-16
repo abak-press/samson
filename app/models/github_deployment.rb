@@ -1,5 +1,6 @@
+# frozen_string_literal: true
 class GithubDeployment
-  DEPLOYMENTS_PREVIEW_MEDIA_TYPE = "application/vnd.github.cannonball-preview+json".freeze
+  DEPLOYMENTS_PREVIEW_MEDIA_TYPE = "application/vnd.github.cannonball-preview+json"
 
   def initialize(deploy)
     @deploy = deploy
@@ -52,6 +53,6 @@ class GithubDeployment
   end
 
   def url
-    AppRoutes.url_helpers.project_deploy_url(@project, @deploy)
+    Rails.application.routes.url_helpers.project_deploy_url(@project, @deploy)
   end
 end

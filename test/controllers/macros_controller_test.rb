@@ -1,18 +1,12 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
-SingleCov.covered! uncovered: 1
+SingleCov.covered!
 
 describe MacrosController do
   let(:project) { projects(:test) }
   let(:macro) { macros(:test) }
-  let(:macro_service) { stub(execute!: nil) }
-  let(:execute_called) { [] }
   let(:job) { Job.create!(commit: macro.reference, command: macro.script, project: project, user: user) }
-
-  before do
-    MacroService.stubs(:new).with(project, user).returns(macro_service)
-    macro_service.stubs(:execute!).capture(execute_called).returns(job)
-  end
 
   as_a_viewer do
     unauthorized :get, :index, project_id: :foo
@@ -25,7 +19,7 @@ describe MacrosController do
   end
 
   as_a_project_deployer do
-    describe "a GET to :index" do
+    describe "#index" do
       before { get :index, project_id: project.to_param }
 
       it "renders the template" do
@@ -33,20 +27,22 @@ describe MacrosController do
       end
     end
 
-    describe 'a POST to #execute' do
-      describe 'with a macro' do
-        before do
-          JobExecution.stubs(:start_job)
+    describe '#execute' do
+      it "executes a macro" do
+        JobExecution.expects(:start_job)
+        assert_difference 'Job.count' do
           post :execute, project_id: project.to_param, id: macro.id
         end
+        assert_redirected_to project_job_path(project, Job.last)
+      end
 
-        it "redirects to the job path" do
-          assert_redirected_to project_job_path(project, Job.last)
+      it "fails execute an invalid macro" do
+        JobExecution.expects(:start_job).never
+        Job.any_instance.expects(:save).returns(false)
+        refute_difference 'Job.count' do
+          post :execute, project_id: project.to_param, id: macro.id
         end
-
-        it "creates a job" do
-          assert_equal [[macro]], execute_called
-        end
+        assert_redirected_to project_macros_path(project)
       end
 
       it 'fails for non-existent macro' do
@@ -64,7 +60,7 @@ describe MacrosController do
   end
 
   as_a_project_admin do
-    describe 'a GET to #new' do
+    describe '#new' do
       before { get :new, project_id: project.to_param }
 
       it 'renders the template' do
@@ -72,7 +68,7 @@ describe MacrosController do
       end
     end
 
-    describe 'a GET to #edit' do
+    describe '#edit' do
       describe 'with a macro' do
         before do
           get :edit, project_id: project.to_param, id: macro.id
@@ -90,7 +86,7 @@ describe MacrosController do
       end
     end
 
-    describe 'a POST to #create' do
+    describe '#create' do
       describe 'with a valid macro' do
         before do
           post :create, project_id: project.to_param, macro: {
@@ -116,7 +112,7 @@ describe MacrosController do
       end
     end
 
-    describe 'a PUT to #update' do
+    describe '#update' do
       describe 'with a valid macro' do
         before do
           post :update, project_id: project.to_param, id: macro.id, macro: {name: 'New'}
@@ -142,11 +138,7 @@ describe MacrosController do
       end
     end
 
-    unauthorized :delete, :destroy, project_id: :foo, id: 1
-  end
-
-  as_a_super_admin do
-    describe 'a DELETE to #destroy' do
+    describe '#destroy' do
       before do
         delete :destroy, project_id: project.to_param, id: macro.id
       end

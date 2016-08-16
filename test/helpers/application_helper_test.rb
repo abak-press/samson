@@ -1,6 +1,8 @@
+# frozen_string_literal: true
+# rubocop:disable Metrics/LineLength
 require_relative '../test_helper'
 
-SingleCov.covered! uncovered: 11
+SingleCov.covered! uncovered: 7
 
 describe ApplicationHelper do
   describe "#render_log" do
@@ -74,7 +76,7 @@ describe ApplicationHelper do
 
     it "starts a deploy" do
       assert_includes link, ">Deploy<"
-      assert_includes link, %{href="/projects/#{project.to_param}/stages/#{stage.to_param}/deploys/new"}
+      assert_includes link, %(href="/projects/#{project.to_param}/stages/#{stage.to_param}/deploys/new")
     end
 
     it "shows locked" do
@@ -89,12 +91,12 @@ describe ApplicationHelper do
       )
       stage.stubs(current_deploy: deploy)
       assert_includes link, ">Deploying master...<"
-      assert_includes link, %{href="/projects/#{project.to_param}/deploys/#{deploy.id}"}
+      assert_includes link, %(href="/projects/#{project.to_param}/deploys/#{deploy.id}")
     end
   end
 
   describe "#github_ok?" do
-    let(:status_url) { "https://#{Rails.application.config.samson.github.status_url}/api/status.json" }
+    let(:status_url) { "#{Rails.application.config.samson.github.status_url}/api/status.json" }
 
     describe "with an OK response" do
       before do
@@ -244,37 +246,6 @@ describe ApplicationHelper do
     end
   end
 
-  describe "#render_time" do
-    let(:ts) { Time.parse("2016-04-18T17:46:10.337+00:00") }
-    let(:current_user) { users(:admin) }
-
-    it "formats time in the uesrs default preference" do
-      render_time(ts, nil).must_equal "<span data-time=\"1461001570000\" class=\"mouseover\">Mon, 18 Apr 2016 17:46:10 +0000</span>"
-    end
-
-    it "formats time in utc" do
-      render_time(ts, 'utc').must_equal "<time datetime=\"2016-04-18 17:46:10 UTC\">2016-04-18 17:46:10 UTC</time>"
-    end
-
-    it "formats time in utc if no timezone cookie is set" do
-      render_time(ts, 'local').must_equal "<time datetime=\"2016-04-18 17:46:10 UTC\">2016-04-18 17:46:10 UTC</time>"
-    end
-
-    it "formats local time in America/Los_Angeles via cookie set by JS" do
-      cookies[:timezone] = 'America/Los_Angeles'
-      render_time(ts, 'local').must_equal "<time datetime=\"2016-04-18 10:46:10 -0700\">2016-04-18 10:46:10 -0700</time>"
-    end
-
-    it "formats local time in America/New_York via cookie set by JS" do
-      cookies[:timezone] = 'America/New_York'
-      render_time(ts, 'local').must_equal "<time datetime=\"2016-04-18 13:46:10 -0400\">2016-04-18 13:46:10 -0400</time>"
-    end
-
-    it "formats time relative" do
-      render_time(ts, 'foobar').must_equal "<span data-time=\"1461001570000\" class=\"mouseover\">Mon, 18 Apr 2016 17:46:10 +0000</span>"
-    end
-  end
-
   describe "#static_render" do
     it "can render nothing" do
       static_render([]).must_equal nil
@@ -293,6 +264,61 @@ describe ApplicationHelper do
 
     it "caches" do
       environments.object_id.must_equal environments.object_id
+    end
+  end
+
+  describe "#render_nested_errors" do
+    # simulate what erb will do so we can see html_safe issues
+    def render
+      ERB::Util.html_escape(render_nested_errors(stage))
+    end
+
+    let(:stage) { stages(:test_staging) }
+
+    it "renders nothing for valid" do
+      render.must_equal ""
+    end
+
+    it "renders simple errors" do
+      stage.errors.add(:base, "Kaboom")
+      render.must_equal "<ul><li>Kaboom</li></ul>"
+    end
+
+    it "renders nested errors" do
+      stage.errors.add(:deploy_groups, "Invalid") # happens on save normally .. not a helpful message for our users
+      stage.errors.add(:base, "BASE") # other error to make sure nesting is correct
+      stage.deploy_groups.to_a.first.errors.add(:base, "Kaboom")
+      render.must_equal "<ul><li>Deploy groups Invalid<ul><li>Kaboom</li></ul></li><li>BASE</li></ul>"
+    end
+
+    it "does not loop" do
+      stage.errors.add(:project, "Invalid")
+      stage.project.stubs(stages: [stage])
+      stage.project.errors.add(:stages, "Invalid")
+      render.must_equal "<ul><li>Project Invalid<ul><li>Stages Invalid</li></ul></li></ul>"
+    end
+
+    it "cannot inject html" do
+      stage.errors.add(:deploy_groups, "<foo>")
+      stage.errors.add(:base, "<bar>")
+      stage.deploy_groups.to_a.first.errors.add(:base, "<baz>")
+      render.must_equal "<ul><li>Deploy groups &lt;foo&gt;<ul><li>&lt;baz&gt;</li></ul></li><li>&lt;bar&gt;</li></ul>"
+    end
+  end
+
+  describe "#link_to_history" do
+    let(:user) { users(:admin) }
+
+    around { |t| PaperTrail.with_logging(&t) }
+
+    it "shows a link" do
+      link_to_history(user).must_equal "<a href=\"/versions?item_id=#{user.id}&amp;item_type=User\">History (0)</a>"
+    end
+
+    it "shows number of entries" do
+      user.update_attributes!(name: "Foo")
+      user.update_attributes!(name: "Bar")
+      link_to_history(user).must_include "History (2)"
     end
   end
 end

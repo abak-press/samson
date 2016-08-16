@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: (defined?(Rake) ? 15 : 14) # during rake it is 15
@@ -38,7 +39,8 @@ describe BinaryBuilder do
         "Now starting Build container...\n",
         "Grabbing '/app/artifacts.tar' from build container...\n",
         "Continuing docker build...\n",
-        "Cleaning up docker build image and container...\n"].join
+        "Cleaning up docker build image and container...\n"
+      ].join
     end
 
     it 'does nothing if docker flag is not set for project' do
@@ -67,7 +69,8 @@ describe BinaryBuilder do
           "Now starting Build container...\n",
           "Grabbing '/app/artifacts.tar' from build container...\n",
           "Continuing docker build...\n",
-          "Cleaning up docker build image and container...\n"].join
+          "Cleaning up docker build image and container...\n"
+        ].join
       end
 
       it 'stop build when pre build shell script fails' do
@@ -82,39 +85,35 @@ describe BinaryBuilder do
 
   describe "#create_container_options" do
     it 'uses the old style of mounting directories with api v1.19' do
-      Docker.stubs(:version).returns({ 'ApiVersion' => '1.19' })
+      Docker.stubs(:version).returns('ApiVersion' => '1.19')
       builder.send(:create_container_options).must_equal(
-        {
-          'Cmd' => ['/app/build.sh'],
-          'Image' => 'foo_build:abc-19f',
-          'Env' => [],
-          'Volumes' => { '/opt/samson_build_cache' => {} },
-          'HostConfig' => {
-            'Binds' => ['/opt/samson_build_cache:/build/cache'],
-            'NetworkMode' => 'host'
-          }
+        'Cmd' => ['/app/build.sh'],
+        'Image' => 'foo_build:abc-19f',
+        'Env' => [],
+        'Volumes' => { '/opt/samson_build_cache' => {} },
+        'HostConfig' => {
+          'Binds' => ['/opt/samson_build_cache:/build/cache'],
+          'NetworkMode' => 'host'
         }
       )
     end
 
     it 'uses the new style of mounting directories with api v1.20' do
-      Docker.stubs(:version).returns({ 'ApiVersion' => '1.24' })
+      Docker.stubs(:version).returns('ApiVersion' => '1.24')
       builder.send(:create_container_options).must_equal(
-        {
-          'Cmd' => ['/app/build.sh'],
-          'Image' => 'foo_build:abc-19f',
-          'Env' => [],
-          'Mounts' => [
-            {
-              'Source' => '/opt/samson_build_cache',
-              'Destination' => '/build/cache',
-              'Mode' => 'rw,Z',
-              'RW' => true
-            }
-          ],
-          'HostConfig' => {
-            'NetworkMode' => 'host'
+        'Cmd' => ['/app/build.sh'],
+        'Image' => 'foo_build:abc-19f',
+        'Env' => [],
+        'Mounts' => [
+          {
+            'Source' => '/opt/samson_build_cache',
+            'Destination' => '/build/cache',
+            'Mode' => 'rw,Z',
+            'RW' => true
           }
+        ],
+        'HostConfig' => {
+          'NetworkMode' => 'host'
         }
       )
     end
@@ -126,11 +125,11 @@ describe BinaryBuilder do
         name: 'THIRD', value: 'third',
         scope_type: 'Environment', scope_id: environments(:production).id
       )
-      builder.send(:create_container_options)['Env'].must_equal %w(FIRST=first SECOND=second)
+      builder.send(:create_container_options)['Env'].must_equal %w[FIRST=first SECOND=second]
     end
 
     it 'throws exception with api < 1.15' do
-      Docker.stubs(:version).returns({ 'ApiVersion' => '1.14' })
+      Docker.stubs(:version).returns('ApiVersion' => '1.14')
       proc { builder.send(:create_container_options) }.must_raise RuntimeError
     end
   end
@@ -139,6 +138,14 @@ describe BinaryBuilder do
     it 'downcases the image name' do
       image_name = builder.send(:image_name)
       image_name.must_equal(image_name.downcase)
+    end
+
+    describe 'with git refs that include slashes' do
+      let(:reference) { 'namespaced/ref' }
+
+      it 'replaces slashes with dashes' do
+        builder.send(:image_name).must_equal 'foo_build:namespaced-ref'
+      end
     end
   end
 end

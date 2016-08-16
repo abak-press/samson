@@ -1,7 +1,8 @@
+# frozen_string_literal: true
 ENV["RAILS_ENV"] ||= "test"
 
 require 'single_cov'
-SingleCov::APP_FOLDERS << 'decorators'
+SingleCov::APP_FOLDERS << 'decorators' << 'presenters'
 SingleCov.setup :minitest
 
 if ENV['CODECLIMATE_REPO_TOKEN']
@@ -20,71 +21,11 @@ require_relative '../config/environment'
 require 'rails/test_help'
 require 'minitest/rails'
 require 'maxitest/autorun'
+require 'maxitest/timeout'
 require 'webmock/minitest'
 require 'mocha/setup'
 
 require 'sucker_punch/testing/inline'
-
-# Mock up vault client
-class VaultClient
-  def logical
-    @logical ||= Logical.new
-  end
-
-  def self.vault_response_object(data)
-    Response.new(data)
-  end
-
-  class Response
-    attr_accessor :lease_id, :lease_duration, :renewable, :data, :auth
-    def initialize(data)
-      self.lease_id = nil
-      self.lease_duration = nil
-      self.renewable = nil
-      self.auth = nil
-      self.data = data
-    end
-
-    def to_h
-      instance_values.symbolize_keys
-    end
-  end
-
-  class Logical
-    def list(key)
-      uri = URI("https://127.0.0.1:8200/v1/#{key}?list=true")
-      Net::HTTP.get(uri)
-    end
-
-    def read(key)
-      response_data = {
-        "secret/production/foo/pod2/isbar": { vault: "bar"},
-        "secret/this/key/isnot/there": {vault: nil}
-      }
-
-      uri = URI("https://127.0.0.1:8200/v1/#{key}")
-      Net::HTTP.get(uri)
-      Response.new(response_data[key.to_sym])
-    end
-
-    def delete(key)
-      uri = URI("https://127.0.0.1:8200/v1/#{key}")
-      http = Net::HTTP.new(uri.host, uri.port)
-      req = Net::HTTP::Delete.new(uri.path)
-      http.request(req)
-    end
-
-    def write(key, body)
-      uri = URI("https://127.0.0.1:8200/v1/#{key}")
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
-      http.verify_mode = OpenSSL::SSL::VERIFY_NONE
-      req = Net::HTTP::Put.new(uri.path)
-      req.body = body.to_json
-      http.request(req)
-    end
-  end
-end
 
 # Use ActiveSupport::TestCase for everything that was not matched before
 MiniTest::Spec::DSL::TYPES[-1] = [//, ActiveSupport::TestCase]
@@ -172,7 +113,7 @@ class ActiveSupport::TestCase
     QueryDiet::Logger.queries.map(&:first) - ["select 1"]
   end
 
-  def assert_sql_queries(count, &block)
+  def assert_sql_queries(count)
     old = ar_queries
     yield
     new = ar_queries
@@ -188,12 +129,13 @@ class ActiveSupport::TestCase
   # record hook and their arguments called during a given block
   def record_hooks(callback, &block)
     called = []
-    Samson::Hooks.with_callback(callback, lambda{ |*args| called << args }, &block)
+    Samson::Hooks.with_callback(callback, lambda { |*args| called << args }, &block)
     called
   end
 
   def silence_stderr
-    old, $VERBOSE = $VERBOSE, nil
+    old = $VERBOSE
+    $VERBOSE = nil
     yield
   ensure
     $VERBOSE = old
@@ -205,7 +147,12 @@ class ActiveSupport::TestCase
   end
 
   def create_secret(key)
-    SecretStorage::DbBackend::Secret.create!(id: key, value: 'MY-SECRET', updater_id: users(:admin).id, creator_id: users(:admin).id)
+    SecretStorage::DbBackend::Secret.create!(
+      id: key,
+      value: 'MY-SECRET',
+      updater_id: users(:admin).id,
+      creator_id: users(:admin).id
+    )
   end
 
   def with_env(env)
@@ -218,6 +165,14 @@ class ActiveSupport::TestCase
     yield
   ensure
     old.each { |k, v| ENV[k] = v }
+  end
+
+  def self.with_env(env)
+    around { |test| with_env(env, &test) }
+  end
+
+  def self.run_inside_of_temp_directory
+    around { |test| Dir.mktmpdir { |dir| Dir.chdir(dir) { test.call } } }
   end
 end
 
@@ -239,7 +194,7 @@ class ActionController::TestCase
       end
     end
 
-    %w{super_admin admin deployer viewer project_admin project_deployer}.each do |user|
+    %w[super_admin admin deployer viewer project_admin project_deployer].each do |user|
       define_method "as_a_#{user}" do |&block|
         describe "as a #{user}" do
           let(:user) { users(user) }
@@ -250,12 +205,20 @@ class ActionController::TestCase
     end
   end
 
+  def json!
+    request.env['CONTENT_TYPE'] = 'application/json'
+  end
+
+  def auth!(header)
+    request.env['HTTP_AUTHORIZATION'] = header
+  end
+
   before do
-    middleware = Rails.application.config.middleware.detect {|m| m.name == 'Warden::Manager'}
+    middleware = Rails.application.config.middleware.detect { |m| m.name == 'Warden::Manager' }
     manager = Warden::Manager.new(nil, &middleware.block)
     request.env['warden'] = Warden::Proxy.new(request.env, manager)
 
-    stub_request(:get, "https://#{Rails.application.config.samson.github.status_url}/api/status.json").to_timeout
+    stub_request(:get, "#{Rails.application.config.samson.github.status_url}/api/status.json").to_timeout
     create_default_stubs
   end
 
@@ -289,10 +252,41 @@ class ActionController::TestCase
 
   alias_method_chain :process, :catch_warden
 
+  def self.oauth_setup!
+    let(:redirect_uri) { 'urn:ietf:wg:oauth:2.0:oob' }
+    let(:oauth_app) do
+      Doorkeeper::Application.new do |app|
+        app.name = "Test App"
+        app.redirect_uri = redirect_uri
+        app.scopes = :default
+      end
+    end
+
+    let(:user) do
+      users(:admin)
+    end
+
+    let(:token) do
+      oauth_app.access_tokens.new do |token|
+        token.resource_owner_id = user.id
+        token.application_id = oauth_app.id
+        token.expires_in = 1000
+        token.scopes = :default
+      end
+    end
+
+    before do
+      token.save!
+      json!
+      auth!("Bearer #{token.token}")
+    end
+  end
+
   def self.use_test_routes
     before do
       Rails.application.routes.draw do
-        match "/test/:test_route/:controller/:action", :via => [:get, :post, :put, :patch, :delete]
+        match "/test/:test_route/:controller/:action", via: [:get, :post, :put, :patch, :delete]
+        # get "testing/foo" => "testing#foo"
       end
     end
 

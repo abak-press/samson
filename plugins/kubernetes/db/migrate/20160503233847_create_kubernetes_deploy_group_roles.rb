@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+# rubocop:disable Metrics/LineLength
 class CreateKubernetesDeployGroupRoles < ActiveRecord::Migration
   def change
     create_table :kubernetes_deploy_group_roles do |t|

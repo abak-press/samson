@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -6,10 +7,9 @@ describe JobsController do
   let(:project) { projects(:test) }
   let(:stage) { stages(:test_staging) }
   let(:admin) { users(:admin) }
-  let(:command) { "echo hello" }
+  let(:command) { "echo hi" }
   let(:job) { Job.create!(command: command, project: project, user: admin) }
   let(:job_service) { stub(execute!: nil) }
-  let(:execute_called) { [] }
 
   as_a_viewer do
     describe "#enabled" do
@@ -28,7 +28,7 @@ describe JobsController do
   end
 
   as_a_viewer do
-    describe "a GET to :index" do
+    describe "#index" do
       before { get :index, project_id: project.to_param }
 
       it "renders the template" do
@@ -36,7 +36,7 @@ describe JobsController do
       end
     end
 
-    describe "a GET to :show" do
+    describe "#show" do
       describe 'with a job' do
         before { get :show, project_id: project.to_param, id: job }
 
@@ -91,35 +91,36 @@ describe JobsController do
     end
 
     describe "#create" do
-      before do
-        JobService.stubs(:new).with(project, user).returns(job_service)
-        job_service.stubs(:execute!).capture(execute_called).returns(job)
-        JobExecution.stubs(:start_job)
+      let(:command_ids) { [] }
 
-        post :create, commands: {ids: []}, job: {
+      def create
+        post :create, commands: {ids: command_ids}, job: {
           command: command,
           commit: "master"
         }, project_id: project.to_param
       end
 
-      it "redirects to the job path" do
-        assert_redirected_to project_job_path(project, job)
+      it "creates a job and starts it" do
+        JobExecution.expects(:start_job)
+        assert_difference('Job.count') { create }
+        assert_redirected_to project_job_path(project, Job.last)
       end
 
-      it "creates a job" do
-        assert_equal [["master", [], command]], execute_called
+      it "keeps commands in correct order" do
+        command_ids.replace([commands(:global).id, commands(:echo).id])
+        create
+        Job.last.command.must_equal("t\necho hello\necho hi")
       end
 
-      describe "when invalid" do
-        let("job") { Job.new }
-
-        it "renders" do
-          assert_template :new
-        end
+      it "fails to create job when locked" do
+        JobExecution.expects(:start_job).never
+        Job.any_instance.expects(:save).returns(false)
+        refute_difference('Job.count') { create }
+        assert_template :new
       end
     end
 
-    describe "a DELETE to :destroy" do
+    describe "#destroy" do
       describe "when being a admin of the project" do
         before do
           delete :destroy, project_id: project.to_param, id: job
@@ -144,4 +145,3 @@ describe JobsController do
     end
   end
 end
-

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../../test_helper'
 
 SingleCov.covered!
@@ -6,6 +7,7 @@ describe Admin::Kubernetes::DeployGroupRolesController do
   let(:deploy_group_role) { kubernetes_deploy_group_roles(:test_pod1_app_server) }
   let(:deploy_group) { deploy_group_role.deploy_group }
   let(:project) { deploy_group_role.project }
+  let(:stage) { stages(:test_staging) }
 
   id = ActiveRecord::FixtureSet.identify(:test_pod1_app_server)
   project_id = ActiveRecord::FixtureSet.identify(:test)
@@ -25,6 +27,18 @@ describe Admin::Kubernetes::DeployGroupRolesController do
       it "renders" do
         get :index
         assert_template :index
+        assigns[:deploy_group_roles].must_include deploy_group_role
+      end
+
+      it "can filter by project_id" do
+        deploy_group_role.update_column(:project_id, 123)
+        get :index, search: {project_id: project_id}
+        assigns[:deploy_group_roles].map(&:project_id).uniq.size.must_equal 1
+      end
+
+      it "can filter by deploy_group" do
+        get :index, search: {deploy_group_id: deploy_groups(:pod100).id}
+        assigns[:deploy_group_roles].map(&:deploy_group_id).uniq.size.must_equal 1
       end
     end
 
@@ -52,15 +66,32 @@ describe Admin::Kubernetes::DeployGroupRolesController do
     unauthorized :get, :edit, id: id
     unauthorized :get, :update, id: id
     unauthorized :get, :destroy, id: id
+    unauthorized :post, :seed, stage_id: ActiveRecord::FixtureSet.identify(:test_staging)
   end
 
   as_a_project_admin do
     describe "#create" do
-      let(:params) { {kubernetes_deploy_group_role: {project_id: project.id, kubernetes_role_id: kubernetes_roles(:app_server).id, deploy_group_id: deploy_group.id, cpu: 1, ram: 1, replicas: 1}} }
+      let(:params) do
+        {
+          kubernetes_deploy_group_role: {
+            project_id: project.id,
+            kubernetes_role_id: kubernetes_roles(:app_server).id,
+            deploy_group_id: deploy_group.id,
+            cpu: 1,
+            ram: 1,
+            replicas: 1
+          }
+        }
+      end
 
       it "can create for projects I am admin of" do
         post :create, params
         assert_redirected_to [:admin, Kubernetes::DeployGroupRole.last]
+      end
+
+      it "redirects to param" do
+        post :create, params.merge(redirect_to: '/bar')
+        assert_redirected_to '/bar'
       end
 
       it "renders when failing to create" do
@@ -126,6 +157,22 @@ describe Admin::Kubernetes::DeployGroupRolesController do
         user.user_project_roles.delete_all
         delete :destroy, id: deploy_group_role.id
         assert deploy_group_role.reload
+      end
+    end
+
+    describe "#seed" do
+      it "adds missing roles" do
+        Kubernetes::DeployGroupRole.expects(:seed!).returns true
+        post :seed, stage_id: stage.id
+        assert_redirected_to [stage.project, stage]
+        assert flash[:notice]
+      end
+
+      it "fails to add missing roles" do
+        Kubernetes::DeployGroupRole.expects(:seed!).returns false
+        post :seed, stage_id: stage.id
+        assert_redirected_to [stage.project, stage]
+        assert flash[:alert]
       end
     end
   end

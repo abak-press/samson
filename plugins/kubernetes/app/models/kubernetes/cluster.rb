@@ -1,5 +1,5 @@
+# frozen_string_literal: true
 require 'kubeclient'
-require 'celluloid/io'
 
 module Kubernetes
   class Cluster < ActiveRecord::Base
@@ -12,27 +12,12 @@ module Kubernetes
     validates :config_context, presence: true
     validate :test_client_connection
 
-    def watch!
-      Watchers::ClusterPodWatcher.restart_watcher(self)
-      Watchers::ClusterPodErrorWatcher.restart_watcher(self)
-    end
-
     def client
-      @client ||= Kubeclient::Client.new(
-        context.api_endpoint,
-        context.api_version,
-        ssl_options: context.ssl_options,
-        socket_options: client_socket_options
-      )
+      @client ||= build_client :default
     end
 
     def extension_client
-      @extension_client ||= Kubeclient::Client.new(
-        context.api_endpoint.gsub(/\/api$/, '') + '/apis',
-        'extensions/v1beta1',
-        ssl_options: context.ssl_options,
-        socket_options: client_socket_options
-      )
+      @extension_client ||= build_client 'extensions/v1beta1'
     end
 
     def context
@@ -41,12 +26,6 @@ module Kubernetes
 
     def namespaces
       client.get_namespaces.map { |ns| ns.metadata.name } - %w[kube-system]
-    end
-
-    def connection_valid?
-      client.api_valid?
-    rescue Errno::ECONNREFUSED
-      false
     end
 
     def namespace_exists?(namespace)
@@ -61,19 +40,34 @@ module Kubernetes
 
     private
 
-    def test_client_connection
-      if File.exists?(config_filepath)
-        errors.add(:config_context, "Could not connect to API Server") unless connection_valid?
-      else
-        errors.add(:config_filepath, "File does not exist")
-      end
+    def connection_valid?
+      client.api_valid?
+    rescue KubeException, Errno::ECONNREFUSED
+      false
     end
 
-    def client_socket_options
-      if context.ssl_options[:verify_ssl] == OpenSSL::SSL::VERIFY_PEER
-        { ssl_socket_class: Celluloid::IO::SSLSocket }
+    def build_client(type)
+      endpoint = context.api_endpoint
+      if type == :default
+        type = context.api_version
       else
-        { socket_class: Celluloid::IO::TCPSocket }
+        endpoint = endpoint.sub(/\/api$/, '') + '/apis'
+      end
+
+      Kubeclient::Client.new(
+        endpoint,
+        type,
+        ssl_options: context.ssl_options
+      )
+    end
+
+    def test_client_connection
+      if File.exist?(config_filepath)
+        unless connection_valid?
+          errors.add(:config_context, "Could not connect to API Server")
+        end
+      else
+        errors.add(:config_filepath, "File does not exist")
       end
     end
   end

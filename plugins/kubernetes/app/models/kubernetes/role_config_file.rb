@@ -1,81 +1,49 @@
+# frozen_string_literal: true
 module Kubernetes
-
-  # This file represents a Kubernetes configuration file for a specific project role.
-  # A single configuration file can have both a Delpoyment spec and a Service spec, as two separate documents.
+  # Represents a Kubernetes configuration file for a project role.
+  # A configuration file can have for example both a Deployment spec and a Service spec
   class RoleConfigFile
-    attr_reader :file_path, :deployment, :service
+    attr_reader :path, :elements
 
-    def initialize(contents, file_path)
-      @file_path = file_path
-      @config_file = Kubernetes::Util.parse_file(contents, file_path)
-      parse_file
+    DEPLOY_KINDS = ['Deployment', 'DaemonSet'].freeze
+    JOB_KINDS = ['Job'].freeze
+    SERVICE_KINDS = ['Service'].freeze
+
+    def initialize(content, path)
+      @path = path
+
+      if content.blank?
+        raise Samson::Hooks::UserError, "does not contain config file '#{path}'"
+      end
+
+      begin
+        @elements = Array.wrap(Kubernetes::Util.parse_file(content, path)).compact
+      rescue
+        raise Samson::Hooks::UserError, "Error found when parsing #{path}\n#{$!.message}"
+      end
+
+      if errors = Kubernetes::RoleVerifier.new(@elements).verify
+        raise Samson::Hooks::UserError, "Error found when parsing #{path}\n#{errors.join("\n")}"
+      end
+    end
+
+    def deploy
+      find_by_kind(DEPLOY_KINDS)
+    end
+
+    def service
+      find_by_kind(SERVICE_KINDS)
+    end
+
+    def job
+      find_by_kind(JOB_KINDS)
     end
 
     private
 
-    def parse_file
-      parse_deployment
-      parse_service
-    end
-
-    def parse_deployment
-      deployment_hash = as_hash('Deployment') || as_hash('DaemonSet')
-      raise 'Deployment specification missing in the configuration file.' if deployment_hash.nil?
-      @deployment = Deployment.new(deployment_hash)
-    rescue => ex
-      Rails.logger.error "Deployment YAML '#{file_path}' invalid: #{ex.message}"
-      raise ex
-    end
-
-    def parse_service
-      service_hash = as_hash('Service')
-      @service = Service.new(service_hash) unless service_hash.nil?
-    rescue => ex
-      Rails.logger.error "Deployment YAML '#{file_path}' invalid: #{ex.message}"
-      raise ex
-    end
-
-    def as_hash(type)
-      hash = Array.wrap(@config_file).detect { |doc| doc['kind'] == type }.freeze
-      hash.dup.with_indifferent_access unless hash.nil?
-    end
-
-    #
-    # INNER CLASSES
-    #
-    class Deployment < RecursiveOpenStruct
-      DEFAULT_RESOURCE_CPU = '99m'
-      DEFAULT_RESOURCE_RAM = '512Mi'
-      DEFAULT_ROLLOUT_STRATEGY = 'RollingUpdate'
-
-      def initialize(hash = nil, args = {})
-        args.merge!(recurse_over_arrays: true)
-        super(hash, args)
-      end
-
-      def cpu_m
-        val = first_container.try(:resources).try(:limits).try(:cpu) || DEFAULT_RESOURCE_CPU
-        /(\d+(.\d+)?)/.match(val).to_s.to_f.try(:/, 1000)
-      end
-
-      def ram_mi
-        val = first_container.try(:resources).try(:limits).try(:memory) || DEFAULT_RESOURCE_RAM
-        /(\d+)/.match(val).to_s.to_i
-      end
-
-      def first_container
-        spec.template.spec.containers.first
-      end
-
-      def strategy_type
-        spec.try(:strategy).try(:type) || DEFAULT_ROLLOUT_STRATEGY
-      end
-    end
-
-    class Service < RecursiveOpenStruct
-      def initialize(hash = nil, args = {})
-        args.merge!(recurse_over_arrays: true)
-        super(hash, args)
+    def find_by_kind(kinds)
+      @elements.detect do |doc|
+        return doc.with_indifferent_access if kinds.include?(doc['kind'])
       end
     end
   end

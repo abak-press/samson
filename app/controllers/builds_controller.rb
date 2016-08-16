@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class BuildsController < ApplicationController
   include CurrentProject
 
@@ -23,9 +24,7 @@ class BuildsController < ApplicationController
     @build.creator = current_user
     @build.save
 
-    if @build.persisted? && params[:build_image].present?
-      start_docker_build
-    end
+    start_docker_build if @build.persisted? && params[:build_image].present?
 
     respond_to do |format|
       format.html do
@@ -87,7 +86,9 @@ class BuildsController < ApplicationController
   end
 
   def new_build_params
-    params.require(:build).permit(:git_ref, :label, :description)
+    params.require(:build).permit(
+      *[:git_ref, :label, :description] + Samson::Hooks.fire(:build_params)
+    )
   end
 
   def edit_build_params
@@ -114,7 +115,7 @@ class BuildsController < ApplicationController
         current_project.repository.update_local_cache!
       end
 
-      current_project.repository.commit_from_ref(new_build_params[:git_ref], length: nil)
+      current_project.repository.commit_from_ref(new_build_params[:git_ref])
     end
   end
 end

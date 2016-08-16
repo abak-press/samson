@@ -1,5 +1,5 @@
+# frozen_string_literal: true
 class CreateVersions < ActiveRecord::Migration
-
   # The largest text column available in all supported RDBMS is
   # 1024^3 - 1 bytes, roughly one gibibyte.  We specify a size
   # so that MySQL will use `longtext` instead of `text`.  Otherwise,
@@ -8,11 +8,11 @@ class CreateVersions < ActiveRecord::Migration
 
   def change
     create_table :versions do |t|
-      t.string   :item_type, :null => false
-      t.integer  :item_id,   :null => false
-      t.string   :event,     :null => false
+      t.string   :item_type, null: false
+      t.integer  :item_id,   null: false
+      t.string   :event,     null: false
       t.string   :whodunnit
-      t.text     :object,    :limit => TEXT_BYTES
+      t.text     :object, limit: TEXT_BYTES
 
       # Known issue in MySQL: fractional second precision
       # -------------------------------------------------

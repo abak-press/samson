@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -36,7 +37,8 @@ describe NewRelicController do
             with([new_relic_applications(:production).name], initial).
             returns('test_project' => true)
 
-          get :show, project_id: projects(:test),
+          get :show,
+            project_id: projects(:test),
             stage_id: stages(:test_staging),
             initial: initial ? 'true' : nil
         end

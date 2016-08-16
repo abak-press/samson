@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.not_covered!
@@ -43,10 +44,10 @@ describe "cleanliness" do
     end
   end
 
-  it "does not have actions on base controller" do
+  it "does not have public actions on base controller" do
     found = ApplicationController.action_methods.to_a
-    found.reject { |a| a =~ /^(_conditional_callback_around_|_callback_before_)/ } - ["flash"]
-    found.must_equal []
+    found.reject! { |a| a =~ /^(_conditional_callback_around_|_callback_before_)/ }
+    (found - ["flash"]).must_equal []
   end
 
   it "enforces coverage" do
@@ -86,7 +87,6 @@ describe "cleanliness" do
 
   it "tests all files" do
     untested = [
-      "app/controllers/application_controller.rb",
       "app/controllers/concerns/current_project.rb",
       "app/controllers/concerns/stage_permitted_params.rb",
       "app/mailers/application_mailer.rb",
@@ -97,10 +97,11 @@ describe "cleanliness" do
       "app/models/concerns/has_role.rb",
       "app/models/concerns/searchable.rb",
       "lib/generators/plugin/plugin_generator.rb",
-      "lib/generators/plugin/templates/test_helper.rb",
       "lib/samson/integration.rb",
+      "lib/samson/logging.rb",
       "lib/warden/strategies/basic_strategy.rb",
       "lib/warden/strategies/session_strategy.rb",
+      "lib/warden/strategies/doorkeeper_strategy.rb",
       "plugins/env/app/models/concerns/accepts_environment_variables.rb",
       "plugins/env/app/models/environment_variable_group.rb",
       "plugins/env/app/models/project_environment_variable_group.rb",
@@ -108,22 +109,9 @@ describe "cleanliness" do
       "plugins/kubernetes/app/decorators/build_decorator.rb",
       "plugins/kubernetes/app/decorators/deploy_group_decorator.rb",
       "plugins/kubernetes/app/decorators/environment_decorator.rb",
-      "plugins/kubernetes/app/models/concerns/kubernetes/api/deleted_pod.rb",
-      "plugins/kubernetes/app/models/concerns/kubernetes/api/failed_pod.rb",
-      "plugins/kubernetes/app/models/concerns/kubernetes/deploy_group_permitted_params.rb",
-      "plugins/kubernetes/app/models/concerns/kubernetes/has_status.rb",
-      "plugins/kubernetes/app/models/kuber_deploy_service.rb",
       "plugins/kubernetes/app/models/kubernetes/cluster_deploy_group.rb",
       "plugins/kubernetes/app/models/kubernetes/service.rb",
-      "plugins/kubernetes/app/models/watchers/base_cluster_watcher.rb",
-      "plugins/kubernetes/app/models/watchers/cluster_pod_error_watcher.rb",
-      "plugins/kubernetes/app/models/watchers/events/cluster_event.rb",
-      "plugins/kubernetes/app/models/watchers/events/kubernetes_event.rb",
-      "plugins/kubernetes/app/models/watchers/events/pod_event.rb",
-      "plugins/kubernetes/app/models/watchers/topic_subscription.rb",
-      "plugins/kubernetes/app/serializers/kubernetes/release_doc_serializer.rb",
-      "plugins/kubernetes/app/serializers/kubernetes/release_serializer.rb",
-      "plugins/pipelines/app/models/concerns/samson_pipelines/stage_concern.rb",
+      "plugins/pipelines/app/models/concerns/samson_pipelines/stage_concern.rb"
     ]
 
     SingleCov.assert_tested(
@@ -131,5 +119,9 @@ describe "cleanliness" do
       tests: all_tests,
       untested: untested
     )
+  end
+
+  it "has same version in .ruby-version and lock to make herku not crash" do
+    File.read('Gemfile.lock').must_include File.read('.ruby-version').strip
   end
 end

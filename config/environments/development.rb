@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 Samson::Application.configure do
   # Settings specified here will take precedence over those in config/application.rb.
 
@@ -16,7 +17,7 @@ Samson::Application.configure do
   # Don't care if the mailer can't send.
   config.action_mailer.raise_delivery_errors = false
 
-  self.default_url_options.merge!( port: config.samson.uri.port )
+  default_url_options[:port] = config.samson.uri.port
 
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
@@ -28,10 +29,6 @@ Samson::Application.configure do
   # This option may cause significant delays in view rendering with a large
   # number of complex assets.
   config.assets.debug = false
-
-  if ENV["RAILS_LOG_TO_STDOUT"].present?
-    config.logger = ActiveSupport::TaggedLogging.new(Logger.new(STDOUT))
-  end
 
   BetterErrors::Middleware.allow_ip! ENV['TRUSTED_IP'] if ENV['TRUSTED_IP']
 end

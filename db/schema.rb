@@ -11,13 +11,13 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 20160512204809) do
+ActiveRecord::Schema.define(version: 20160726210144) do
 
   create_table "builds", force: :cascade do |t|
-    t.integer  "project_id",                       null: false
+    t.integer  "project_id",                                       null: false
     t.integer  "number",              limit: 4
-    t.string   "git_sha",             limit: 255
-    t.string   "git_ref",             limit: 255
+    t.string   "git_sha",             limit: 255,                  null: false
+    t.string   "git_ref",             limit: 255,                  null: false
     t.string   "docker_image_id",     limit: 255
     t.string   "docker_ref",          limit: 255
     t.string   "docker_repo_digest",  limit: 255
@@ -27,6 +27,7 @@ ActiveRecord::Schema.define(version: 20160512204809) do
     t.integer  "created_by"
     t.datetime "created_at"
     t.datetime "updated_at"
+    t.boolean  "kubernetes_job",                   default: false, null: false
   end
 
   add_index "builds", ["created_by"], name: "index_builds_on_created_by", using: :btree
@@ -56,6 +57,7 @@ ActiveRecord::Schema.define(version: 20160512204809) do
     t.datetime "updated_at",                 null: false
     t.string   "env_value",      limit: 255, null: false
     t.string   "permalink",      limit: 255, null: false
+    t.string   "vault_instance", limit: 255
   end
 
   add_index "deploy_groups", ["environment_id"], name: "index_deploy_groups_on_environment_id", using: :btree
@@ -68,6 +70,15 @@ ActiveRecord::Schema.define(version: 20160512204809) do
 
   add_index "deploy_groups_stages", ["deploy_group_id"], name: "index_deploy_groups_stages_on_deploy_group_id", using: :btree
   add_index "deploy_groups_stages", ["stage_id"], name: "index_deploy_groups_stages_on_stage_id", using: :btree
+
+  create_table "deploy_response_urls", force: :cascade do |t|
+    t.integer  "deploy_id",    limit: 4,   null: false
+    t.string   "response_url", limit: 255, null: false
+    t.datetime "created_at",               null: false
+    t.datetime "updated_at",               null: false
+  end
+
+  add_index "deploy_response_urls", ["deploy_id"], name: "index_deploy_response_urls_on_deploy_id", unique: true, using: :btree
 
   create_table "deploys", force: :cascade do |t|
     t.integer  "stage_id",   limit: 4,   null: false
@@ -191,49 +202,43 @@ ActiveRecord::Schema.define(version: 20160512204809) do
     t.integer  "kubernetes_role_id",          limit: 4,                         null: false
     t.integer  "kubernetes_release_id",       limit: 4,                         null: false
     t.integer  "replica_target",              limit: 4,                         null: false
-    t.integer  "replicas_live",               limit: 4,     default: 0,         null: false
-    t.string   "replication_controller_name", limit: 255
-    t.text     "replication_controller_doc",  limit: 65535
-    t.string   "status",                      limit: 255,   default: "created"
     t.datetime "created_at"
     t.datetime "updated_at"
     t.integer  "deploy_group_id"
     t.decimal  "cpu",                                       precision: 4, scale: 2,                     null: false
     t.integer  "ram",                         limit: 4,                                                 null: false
+    t.text     "resource_template",           limit: 65535
   end
 
   add_index "kubernetes_release_docs", ["kubernetes_release_id"], name: "index_kubernetes_release_docs_on_kubernetes_release_id", using: :btree
   add_index "kubernetes_release_docs", ["kubernetes_role_id"], name: "index_kubernetes_release_docs_on_kubernetes_role_id", using: :btree
 
   create_table "kubernetes_releases", force: :cascade do |t|
-    t.string   "status",             default: "created"
-    t.datetime "deploy_finished_at"
-    t.datetime "destroyed_at"
     t.datetime "created_at"
     t.datetime "updated_at"
     t.integer  "build_id"
     t.integer  "user_id"
     t.integer  "project_id",         limit: 4,                       null: false
     t.integer  "deploy_id",          limit: 4
+    t.string   "git_sha",            limit: 40,                      null: false
+    t.string   "git_ref",            limit: 255,                     null: false
   end
 
   add_index "kubernetes_releases", ["build_id"], name: "index_kubernetes_releases_on_build_id"
 
   create_table "kubernetes_roles", force: :cascade do |t|
-    t.integer  "project_id",      limit: 4,                           null: false
-    t.string   "name",            limit: 255,                         null: false
-    t.string   "config_file",     limit: 255
-    t.integer  "replicas",        limit: 4,                           null: false
-    t.integer  "ram",             limit: 4,                           null: false
-    t.decimal  "cpu",                         precision: 4, scale: 2, null: false
-    t.string   "service_name",    limit: 255
-    t.string   "deploy_strategy", limit: 255,                         null: false
-    t.datetime "created_at",                                          null: false
-    t.datetime "updated_at",                                          null: false
+    t.integer  "project_id",    limit: 4,   null: false
+    t.string   "name",          limit: 255, null: false
+    t.string   "config_file",   limit: 255
+    t.string   "service_name",  limit: 255
+    t.datetime "created_at",                null: false
+    t.datetime "updated_at",                null: false
     t.datetime "deleted_at"
+    t.string   "resource_name", limit: 255, null: false
   end
 
   add_index "kubernetes_roles", ["project_id"], name: "index_kubernetes_roles_on_project_id", using: :btree
+  add_index "kubernetes_roles", ["resource_name", "deleted_at"], name: "index_kubernetes_roles_on_resource_name_and_deleted_at", unique: true, length: {"resource_name"=>191, "deleted_at"=>nil}, using: :btree
   add_index "kubernetes_roles", ["service_name", "deleted_at"], name: "index_kubernetes_roles_on_service_name_and_deleted_at", unique: true, length: {"service_name"=>191, "deleted_at"=>nil}, using: :btree
 
   create_table "locks", force: :cascade do |t|
@@ -274,6 +279,49 @@ ActiveRecord::Schema.define(version: 20160512204809) do
   end
 
   add_index "new_relic_applications", ["stage_id", "name"], name: "index_new_relic_applications_on_stage_id_and_name", unique: true, length: {"stage_id"=>nil, "name"=>191}, using: :btree
+
+  create_table "oauth_access_grants", force: :cascade do |t|
+    t.integer  "resource_owner_id", limit: 4,     null: false
+    t.integer  "application_id",    limit: 4,     null: false
+    t.string   "token",             limit: 255,   null: false
+    t.integer  "expires_in",        limit: 4,     null: false
+    t.text     "redirect_uri",      limit: 65535, null: false
+    t.datetime "created_at",                      null: false
+    t.datetime "revoked_at"
+    t.string   "scopes",            limit: 255
+  end
+
+  add_index "oauth_access_grants", ["application_id"], name: "fk_rails_b4b53e07b8", using: :btree
+  add_index "oauth_access_grants", ["token"], name: "index_oauth_access_grants_on_token", unique: true, length: {"token"=>191}, using: :btree
+
+  create_table "oauth_access_tokens", force: :cascade do |t|
+    t.integer  "resource_owner_id",      limit: 4
+    t.integer  "application_id",         limit: 4
+    t.string   "token",                  limit: 255,              null: false
+    t.string   "refresh_token",          limit: 255
+    t.integer  "expires_in",             limit: 4
+    t.datetime "revoked_at"
+    t.datetime "created_at",                                      null: false
+    t.string   "scopes",                 limit: 255
+    t.string   "previous_refresh_token", limit: 255, default: "", null: false
+  end
+
+  add_index "oauth_access_tokens", ["application_id"], name: "fk_rails_732cb83ab7", using: :btree
+  add_index "oauth_access_tokens", ["refresh_token"], name: "index_oauth_access_tokens_on_refresh_token", unique: true, length: {"refresh_token"=>191}, using: :btree
+  add_index "oauth_access_tokens", ["resource_owner_id"], name: "index_oauth_access_tokens_on_resource_owner_id", using: :btree
+  add_index "oauth_access_tokens", ["token"], name: "index_oauth_access_tokens_on_token", unique: true, length: {"token"=>191}, using: :btree
+
+  create_table "oauth_applications", force: :cascade do |t|
+    t.string   "name",         limit: 255,                null: false
+    t.string   "uid",          limit: 255,                null: false
+    t.string   "secret",       limit: 255,                null: false
+    t.text     "redirect_uri", limit: 65535,              null: false
+    t.string   "scopes",       limit: 255,   default: "", null: false
+    t.datetime "created_at",                              null: false
+    t.datetime "updated_at",                              null: false
+  end
+
+  add_index "oauth_applications", ["uid"], name: "index_oauth_applications_on_uid", unique: true, length: {"uid"=>191}, using: :btree
 
   create_table "project_environment_variable_groups", force: :cascade do |t|
     t.integer "project_id",                    limit: 4, null: false
@@ -338,12 +386,25 @@ ActiveRecord::Schema.define(version: 20160512204809) do
   add_index "slack_channels", ["stage_id"], name: "index_slack_channels_on_stage_id", using: :btree
   add_index "secrets", ["id"], name: "index_secrets_on_id", unique: true, length: {"id"=>191}, using: :btree
 
+  create_table "slack_identifiers", force: :cascade do |t|
+    t.integer  "user_id",    limit: 4
+    t.text     "identifier", limit: 65535, null: false
+    t.datetime "created_at",               null: false
+    t.datetime "updated_at",               null: false
+  end
+
+  add_index "slack_identifiers", ["identifier"], name: "index_slack_identifiers_on_identifier", length: {"identifier"=>12}, using: :btree
+  add_index "slack_identifiers", ["user_id"], name: "index_slack_identifiers_on_user_id", unique: true, using: :btree
+
   create_table "slack_webhooks", force: :cascade do |t|
     t.text     "webhook_url", limit: 65535, null: false
     t.string   "channel",     limit: 255
     t.integer  "stage_id",    limit: 4,     null: false
     t.datetime "created_at"
     t.datetime "updated_at"
+    t.boolean  "before_deploy",               default: false, null: false
+    t.boolean  "after_deploy",                default: true,  null: false
+    t.boolean  "for_buddy",                   default: false, null: false
   end
 
   add_index "slack_webhooks", ["stage_id"], name: "index_slack_webhooks_on_stage_id", using: :btree

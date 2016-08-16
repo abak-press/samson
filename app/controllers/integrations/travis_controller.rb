@@ -1,5 +1,4 @@
-require 'digest/sha2'
-
+# frozen_string_literal: true
 class Integrations::TravisController < Integrations::BaseController
   protected
 
@@ -7,13 +6,9 @@ class Integrations::TravisController < Integrations::BaseController
     @payload ||= JSON.parse(params.fetch('payload', '{}'))
   end
 
-  def travis_authorization
-    Digest::SHA2.hexdigest("#{project.github_repo}#{ENV['TRAVIS_TOKEN']}")
-  end
-
   def deploy?
     project &&
-      %w{Passed Fixed}.include?(payload['status_message']) &&
+      %w[Passed Fixed].include?(payload['status_message']) &&
       payload['type'] == 'push' &&
       !skip?
   end

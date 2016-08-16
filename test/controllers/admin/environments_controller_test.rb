@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -79,7 +80,7 @@ describe Admin::EnvironmentsController do
     end
 
     describe '#update' do
-      let(:environment){ environments(:production) }
+      let(:environment) { environments(:production) }
 
       before { request.env["HTTP_REFERER"] = admin_environments_url }
 

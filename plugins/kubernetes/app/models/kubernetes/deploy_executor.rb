@@ -1,17 +1,19 @@
+# frozen_string_literal: true
 # executes a deploy and writes log to job output
 # finishes when cluster is "Ready"
 module Kubernetes
   class DeployExecutor
-    WAIT_FOR_LIVE = 10.minutes
+    WAIT_FOR_LIVE = ENV.fetch('KUBE_WAIT_FOR_LIVE', 10).to_i.minutes
     CHECK_STABLE = 1.minute
     TICK = 2.seconds
     RESTARTED = "Restarted"
 
     ReleaseStatus = Struct.new(:live, :details, :role, :group)
 
-    def initialize(output, job:)
+    def initialize(output, job:, reference:)
       @output = output
       @job = job
+      @reference = reference
     end
 
     def pid
@@ -26,32 +28,38 @@ module Kubernetes
       build = find_or_create_build
       return false if stopped?
       release = create_release(build)
-      ensure_service(release)
-      create_deploys(release)
-      success = wait_for_deploys_to_finish(release)
-      show_failure_cause(release) unless success
-      success
+
+      jobs, deploys = release.release_docs.partition(&:job?)
+      if jobs.any?
+        @output.puts "First deploying jobs ..." if deploys.any?
+        return false unless deploy_to_cluster(release, jobs)
+        @output.puts "Now deploying other roles ..." if deploys.any?
+      end
+      if deploys.any?
+        ensure_service(deploys)
+        return false unless deploy_to_cluster(release, deploys)
+      end
+      true
     end
 
     private
 
-    def wait_for_deploys_to_finish(release)
-      start = Time.now
+    def wait_for_resources_to_complete(release, release_docs)
+      @wait_start_time = Time.now
       stable_ticks = CHECK_STABLE / TICK
+      expected = release_docs.to_a.sum(&:desired_pod_count)
+      @output.puts "Waiting for #{expected} pods to be created"
 
       loop do
         return false if stopped?
 
-        statuses = pod_statuses(release)
+        statuses = pod_statuses(release, release_docs)
 
         if @testing_for_stability
           if statuses.all?(&:live)
             @testing_for_stability += 1
             @output.puts "Stable #{@testing_for_stability}/#{stable_ticks}"
-            if stable_ticks == @testing_for_stability
-              @output.puts "SUCCESS"
-              return true
-            end
+            return success if stable_ticks == @testing_for_stability
           else
             print_statuses(statuses)
             unstable!
@@ -59,13 +67,17 @@ module Kubernetes
           end
         else
           print_statuses(statuses)
-          if statuses.all?(&:live)
-            @output.puts "READY, starting stability test"
-            @testing_for_stability = 0
+          if statuses.all?(&:live) && statuses.count == expected
+            if release_docs.all?(&:job?)
+              return success
+            else
+              @output.puts "READY, starting stability test"
+              @testing_for_stability = 0
+            end
           elsif statuses.map(&:details).include?(RESTARTED)
             unstable!
             return false
-          elsif start + WAIT_FOR_LIVE < Time.now
+          elsif seconds_waiting > WAIT_FOR_LIVE
             @output.puts "TIMEOUT, pods took too long to get live"
             return false
           end
@@ -75,9 +87,9 @@ module Kubernetes
       end
     end
 
-    def pod_statuses(release)
+    def pod_statuses(release, release_docs)
       pods = release.clients.flat_map { |client, query| fetch_pods(client, query) }
-      release.release_docs.map { |release_doc| release_status(pods, release_doc) }
+      release_docs.flat_map { |release_doc| release_statuses(pods, release_doc) }
     end
 
     def fetch_pods(client, query)
@@ -85,24 +97,50 @@ module Kubernetes
     end
 
     def show_failure_cause(release)
-      bad_pods = release.clients.flat_map do |client, query, deploy_group|
+      bad_pods(release).each do |pod, client, deploy_group|
+        @output.puts "\n#{deploy_group.name} pod #{pod.name}:"
+        print_events(client, pod)
+        @output.puts
+        print_logs(client, pod)
+        @output.puts "\n------------------------------------------\n"
+      end
+    end
+
+    # logs - container fails to boot
+    def print_logs(client, pod)
+      @output.puts "LOGS:"
+
+      pod.containers.map(&:name).each do |container|
+        @output.puts "Container #{container}" if pod.containers.size > 1
+
+        logs = begin
+          client.get_pod_log(pod.name, pod.namespace, previous: pod.restarted?, container: container)
+        rescue KubeException
+          begin
+            client.get_pod_log(pod.name, pod.namespace, previous: !pod.restarted?, container: container)
+          rescue KubeException
+            "No logs found"
+          end
+        end
+        # Don't display hundreds of log lines
+        logs.split("\n").last(50).each { |line| @output.puts "  #{line}" }
+      end
+    end
+
+    def print_events(client, pod)
+      @output.puts "EVENTS:"
+      events = client.get_events(
+        namespace: pod.namespace,
+        field_selector: "involvedObject.name=#{pod.name}"
+      )
+      events.uniq! { |e| e.message.split("\n").sort }
+      events.each { |e| @output.puts "  #{e.reason}: #{e.message}" }
+    end
+
+    def bad_pods(release)
+      release.clients.flat_map do |client, query, deploy_group|
         bad_pods = fetch_pods(client, query).select { |p| p.restarted? || !p.live? }
         bad_pods.map { |p| [p, client, deploy_group] }
-      end
-
-      bad_pods.each do |pod, client, deploy_group|
-        namespace = deploy_group.kubernetes_namespace
-        @output.puts "\n#{deploy_group.name} pod #{pod.name}:"
-
-        # events - not enough cpu/ram available
-        @output.puts "EVENTS:"
-        events = client.get_events(namespace: namespace, field_selector: "involvedObject.name=#{pod.name}")
-        events.uniq! { |e| e.message.split("\n").sort }
-        events.each { |e| @output.puts "#{e.reason}: #{e.message}" }
-
-        # logs - container fails to boot
-        @output.puts "\nLOGS:"
-        @output.puts client.get_pod_log(pod.name, namespace, previous: pod.restarted?)
       end
     end
 
@@ -117,47 +155,54 @@ module Kubernetes
       end
     end
 
-    def release_status(pods, release_doc)
+    def release_statuses(pods, release_doc)
       group = release_doc.deploy_group
       role = release_doc.kubernetes_role
 
-      pod = pods.detect { |pod| pod.role_id == role.id && pod.deploy_group_id == group.id }
+      pods = pods.select { |pod| pod.role_id == role.id && pod.deploy_group_id == group.id }
 
-      live, details = if pod
-        if pod.live?
-          if pod.restarted?
-            [false, RESTARTED]
-          else
-            [true, "Live"]
-          end
-        else
-          [false, "Waiting (#{pod.phase}, not Ready)"]
-        end
+      statuses = if pods.empty?
+        [[false, "Missing"]]
       else
-        [false, "Missing"]
+        pods.map do |pod|
+          if pod.live?
+            if pod.restarted?
+              [false, RESTARTED]
+            else
+              [true, "Live"]
+            end
+          else
+            [false, "Waiting (#{pod.phase}, not Ready)"]
+          end
+        end
       end
 
-      ReleaseStatus.new(live, details, role.name, group.name)
+      statuses.map do |live, details|
+        ReleaseStatus.new(live, details, role.name, group.name)
+      end
     end
 
-    def print_statuses(statuses)
-      statuses.group_by(&:group).each do |group, statuses|
-        @output.puts "#{group}:"
+    def print_statuses(status_groups)
+      return if @last_status_output && @last_status_output > 10.seconds.ago
+
+      @last_status_output = Time.now
+      @output.puts "Deploy status after #{seconds_waiting} seconds:"
+      status_groups.group_by(&:group).each do |group, statuses|
         statuses.each do |status|
-          @output.puts "  #{status.role}: #{status.details}"
+          @output.puts "  #{group} #{status.role}: #{status.details}"
         end
       end
     end
 
     def find_or_create_build
-      build = Build.find_by_git_sha(@job.commit) || create_build
+      return unless build = (Build.find_by_git_sha(@job.commit) || create_build)
       wait_for_build(build)
       ensure_build_is_successful(build) unless @stopped
       build
     end
 
     def wait_for_build(build)
-      if !build.docker_repo_digest && build.docker_build_job.try(:running?)
+      if !build.docker_repo_digest && build.docker_build_job.try(:active?)
         @output.puts("Waiting for Build #{build.url} to finish.")
         loop do
           break if @stopped
@@ -169,15 +214,21 @@ module Kubernetes
     end
 
     def create_build
-      @output.puts("Creating Build for #{@job.commit}.")
-      build = Build.create!(
-        git_ref: @job.commit,
-        creator: @job.user,
-        project: @job.project,
-        label: "Automated build triggered via Deploy ##{@job.deploy.id}"
-      )
-      DockerBuilderService.new(build).run!(push: true)
-      build
+      if @job.project.repository.file_content('Dockerfile', @job.commit)
+        @output.puts("Creating Build for #{@job.commit}.")
+        build = Build.create!(
+          git_sha: @job.commit,
+          git_ref: @reference,
+          creator: @job.user,
+          project: @job.project,
+          label: "Automated build triggered via Deploy ##{@job.deploy.id}"
+        )
+        DockerBuilderService.new(build).run!(push: true)
+        build
+      else
+        @output.puts("Not creating a Build for #{@job.commit} since it does not have a Dockerfile.")
+        false
+      end
     end
 
     def ensure_build_is_successful(build)
@@ -199,9 +250,9 @@ module Kubernetes
       )
 
       # get all the roles that are configured for this sha
-      configured_roles = Kubernetes::Role.configured_for_project(@job.project, build.git_sha)
+      configured_roles = Kubernetes::Role.configured_for_project(@job.project, @job.commit)
       if configured_roles.empty?
-        raise Samson::Hooks::UserError, "No kubernetes config files found at sha #{build.git_sha}"
+        raise Samson::Hooks::UserError, "No kubernetes config files found at sha #{@job.commit}"
       end
 
       # build config for every cluster and role we want to deploy to
@@ -232,7 +283,9 @@ module Kubernetes
       release = Kubernetes::Release.create_release(
         deploy_id: @job.deploy.id,
         deploy_groups: group_config,
-        build_id: build.id,
+        build_id: build.try(:id),
+        git_sha: @job.commit,
+        git_ref: @reference,
         user: @job.user,
         project: @job.project
       )
@@ -241,25 +294,40 @@ module Kubernetes
         raise Samson::Hooks::UserError, "Failed to create release: #{release.errors.full_messages.inspect}"
       end
 
-      @output.puts("Created release #{release.id}\nConfig: #{group_config.inspect}")
+      @output.puts("Created release #{release.id}\nConfig: #{group_config.to_json}")
       release
     end
 
-    # Create deploys
-    def create_deploys(release)
-      release.release_docs.each do |release_doc|
-        @output.puts "Creating deploy for #{release_doc.deploy_group.name} role #{release_doc.kubernetes_role.name}"
-        release_doc.deploy_to_kubernetes
+    def deploy(release_docs)
+      release_docs.each do |release_doc|
+        @output.puts "Creating for #{release_doc.deploy_group.name} role #{release_doc.kubernetes_role.name}"
+        release_doc.deploy
       end
     end
 
+    def deploy_to_cluster(release, deploys)
+      deploy(deploys)
+      success = wait_for_resources_to_complete(release, deploys)
+      show_failure_cause(release) unless success
+      success
+    end
+
     # Create the service or report it's status
-    def ensure_service(release)
-      release.release_docs.each do |release_doc|
+    def ensure_service(release_docs)
+      release_docs.each do |release_doc|
         role = release_doc.kubernetes_role
-        status = release_doc.ensure_service
+        status = release_doc.ensure_service # either succeeds or raises
         @output.puts "#{status} for role #{role.name} / service #{role.service_name.presence || "none"}"
       end
+    end
+
+    def success
+      @output.puts "SUCCESS"
+      true
+    end
+
+    def seconds_waiting
+      (Time.now - @wait_start_time).to_i if @wait_start_time
     end
   end
 end

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'shellwords'
 
 class JobExecution
@@ -21,7 +22,7 @@ class JobExecution
 
   def initialize(reference, job, env = {}, &block)
     @output = OutputBuffer.new
-    @executor = TerminalExecutor.new(@output, verbose: true, project: job.project)
+    @executor = TerminalExecutor.new(@output, verbose: true, deploy: job.deploy)
     @viewers = JobViewers.new(@output)
 
     @subscribers = []
@@ -89,18 +90,9 @@ class JobExecution
   end
 
   def error!(exception)
-    message = "JobExecution failed: #{exception.message}"
-
-    if !exception.is_a?(Samson::Hooks::UserError)
-      Airbrake.notify(exception,
-        error_message: message,
-        parameters: {
-          job_id: @job.id
-        }
-      )
-    end
-
-    @output.write(message + "\n")
+    puts_if_present report_to_airbrake(exception)
+    puts_if_present "JobExecution failed: #{exception.message}"
+    puts_if_present render_backtrace(exception)
     @job.error! if @job.active?
   end
 
@@ -130,7 +122,9 @@ class JobExecution
     finish
     ActiveRecord::Base.clear_active_connections!
   end
-  add_transaction_tracer :run!, category: :task, params: '{ job_id: id, project: job.project.try(:name), reference: reference }'
+  add_transaction_tracer :run!,
+    category: :task,
+    params: '{ job_id: id, project: job.project.try(:name), reference: reference }'
 
   def finish
     @subscribers.each(&:call)
@@ -153,12 +147,13 @@ class JobExecution
     ActiveRecord::Base.clear_active_connections!
 
     ActiveSupport::Notifications.instrument("execute_shell.samson", payload) do
-      payload[:success] = if stage.try(:kubernetes)
-        @executor = Kubernetes::DeployExecutor.new(@output, job: @job)
-        @executor.execute!
-      else
-        @executor.execute!(*cmds)
-      end
+      payload[:success] =
+        if stage.try(:kubernetes)
+          @executor = Kubernetes::DeployExecutor.new(@output, job: @job, reference: @reference)
+          @executor.execute!
+        else
+          @executor.execute!(*cmds)
+        end
     end
 
     Samson::Hooks.fire(:after_job_execution, @job, payload[:success], @output)
@@ -169,7 +164,7 @@ class JobExecution
   def setup!(dir)
     locked = lock_project do
       return false unless @repository.setup!(dir, @reference)
-      commit = @repository.commit_from_ref(@reference, length: nil)
+      commit = @repository.commit_from_ref(@reference)
       tag = @repository.tag_from_ref(@reference)
       @job.update_git_references!(commit: commit, tag: tag)
     end
@@ -192,8 +187,9 @@ class JobExecution
       PROJECT_NAME: @job.project.name,
       PROJECT_PERMALINK: @job.project.permalink,
       PROJECT_REPOSITORY: @job.project.repository_url,
-      REVISION: @reference,
-      TAG: (@job.tag || @job.commit).to_s,
+      REFERENCE: @reference,
+      REVISION: @job.commit,
+      TAG: (@job.tag || @job.commit),
       CACHE_DIR: artifact_cache_dir
     }.merge(@env)
 
@@ -214,8 +210,36 @@ class JobExecution
 
   def lock_project(&block)
     holder = (stage.try(:name) || @job.user.name)
-    callback = proc { |owner| @output.write("Waiting for repository while setting it up for #{owner}\n") if Time.now.to_i % 10 == 0 }
+    callback = proc do |owner|
+      @output.write("Waiting for repository while setting it up for #{owner}\n") if Time.now.to_i % 10 == 0
+    end
     @job.project.with_lock(output: @output, holder: holder, error_callback: callback, timeout: lock_timeout, &block)
+  end
+
+  # show full errors if we show exceptions
+  def render_backtrace(exception)
+    return unless Rails.application.config.consider_all_requests_local
+    backtrace = Rails.backtrace_cleaner.filter(exception.backtrace).first(10)
+    backtrace << '...'
+    backtrace.join("\n")
+  end
+
+  def report_to_airbrake(exception)
+    return if exception.is_a?(Samson::Hooks::UserError) # do not spam us with users issues
+
+    return unless error_id = Airbrake.notify(
+      exception,
+      error_message: exception.message,
+      parameters: {job_id: @job.id}
+    )
+
+    raise 'unable to find url' unless url = Airbrake.configuration.user_information[/['"](http.*?)['"]/, 1]
+    raise 'unable to find error' unless url.sub!('{{error_id}}', error_id)
+    "Error #{url}"
+  end
+
+  def puts_if_present(message)
+    @output.puts message if message
   end
 
   class << self

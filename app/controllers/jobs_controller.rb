@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class JobsController < ApplicationController
   include CurrentProject
 
@@ -15,15 +16,13 @@ class JobsController < ApplicationController
   end
 
   def create
-    job_service = JobService.new(@project, current_user)
-    command_ids = command_params[:ids].select(&:present?)
-
-    @job = job_service.execute!(
-      job_params[:commit].strip, command_ids,
-      job_params[:command].strip.presence
+    @job = current_project.jobs.build(
+      user: current_user,
+      command: command,
+      commit: job_params[:commit]
     )
 
-    if @job.persisted?
+    if @job.save
       JobExecution.start_job(JobExecution.new(@job.commit, @job))
       redirect_to [@project, @job]
     else
@@ -38,7 +37,7 @@ class JobsController < ApplicationController
         datetime = @job.updated_at.strftime("%Y%m%d_%H%M%Z")
         send_data @job.output,
           type: 'text/plain',
-          filename: "#{@project.repo_name}-#{@job.id}-#{datetime}.log"
+          filename: "#{@project.permalink}-#{@job.id}-#{datetime}.log"
       end
     end
   end
@@ -53,7 +52,7 @@ class JobsController < ApplicationController
 
   def destroy
     # if @job.can_be_stopped_by?(current_user)
-      @job.stop!
+    @job.stop!
     # else
       # FIXME this can never happen since can_be_stopped_by?
       # is always true for project admins, which is a before filter
@@ -71,6 +70,15 @@ class JobsController < ApplicationController
 
   def command_params
     params.require(:commands).permit(ids: [])
+  end
+
+  def command
+    command_ids = command_params[:ids].select(&:present?).map(&:to_i)
+    commands = Command.find(command_ids).sort_by { |c| command_ids.index(c.id) }.map(&:command)
+    if command = job_params[:command].strip.presence
+      commands << command
+    end
+    commands.join("\n")
   end
 
   def find_job

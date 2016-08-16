@@ -1,3 +1,6 @@
+# frozen_string_literal: true
+require 'csv'
+
 class DeploysController < ApplicationController
   include CurrentProject
 
@@ -9,25 +12,21 @@ class DeploysController < ApplicationController
 
   def index
     scope = current_project.try(:deploys) || Deploy
-    @deploys = if params[:ids]
-      Kaminari.paginate_array(scope.find(params[:ids])).page(1).per(1000)
-    else
-      scope.page(params[:page])
-    end
+    @deploys =
+      if params[:ids]
+        Kaminari.paginate_array(scope.find(params[:ids])).page(1).per(1000)
+      else
+        scope.page(params[:page])
+      end
 
     respond_to do |format|
       format.html
-      format.json { render json: @deploys }
     end
   end
 
   def active
     @deploys = active_deploy_scope
     render partial: 'shared/deploys_table', layout: false if params[:partial]
-  end
-
-  def active_count
-    render json: Deploy.active.count
   end
 
   # Takes the same params that are used by the client side filtering
@@ -49,11 +48,15 @@ class DeploysController < ApplicationController
     end
 
     if params[:deployer].present?
-      users = User.where("name LIKE ?", "%#{ActiveRecord::Base.send(:sanitize_sql_like, params[:deployer])}%").pluck(:id)
+      users = User.where(
+        "name LIKE ?", "%#{ActiveRecord::Base.send(:sanitize_sql_like, params[:deployer])}%"
+      ).pluck(:id)
     end
 
     if params[:project_name].present?
-      projects = Project.where("name LIKE ?", "%#{ActiveRecord::Base.send(:sanitize_sql_like, params[:project_name])}%").pluck(:id)
+      projects = Project.where(
+        "name LIKE ?", "%#{ActiveRecord::Base.send(:sanitize_sql_like, params[:project_name])}%"
+      ).pluck(:id)
     end
 
     if users || status
@@ -79,6 +82,10 @@ class DeploysController < ApplicationController
     respond_to do |format|
       format.json do
         render json: @deploys
+      end
+      format.csv do
+        datetime = Time.now.strftime "%Y%m%d_%H%M"
+        send_data as_csv, type: :csv, filename: "Deploys_search_#{datetime}.csv"
       end
       format.html
     end
@@ -116,9 +123,7 @@ class DeploysController < ApplicationController
   end
 
   def buddy_check
-    if @deploy.pending?
-      @deploy.confirm_buddy!(current_user)
-    end
+    @deploy.confirm_buddy!(current_user) if @deploy.pending?
 
     redirect_to [current_project, @deploy]
   end
@@ -129,7 +134,7 @@ class DeploysController < ApplicationController
       format.text do
         datetime = @deploy.updated_at.strftime "%Y%m%d_%H%M%Z"
         send_data @deploy.output,
-          filename: "#{current_project.repo_name}-#{@deploy.stage.name.parameterize}-#{@deploy.id}-#{datetime}.log",
+          filename: "#{current_project.name}-#{@deploy.stage.name.parameterize}-#{@deploy.id}-#{datetime}.log",
           type: 'text/plain'
       end
     end
@@ -155,7 +160,7 @@ class DeploysController < ApplicationController
   protected
 
   def deploy_permitted_params
-    [ :reference, :stage_id ] + Samson::Hooks.fire(:deploy_permitted_params)
+    [:reference, :stage_id] + Samson::Hooks.fire(:deploy_permitted_params)
   end
 
   def reference
@@ -176,5 +181,24 @@ class DeploysController < ApplicationController
 
   def active_deploy_scope
     current_project ? current_project.deploys.active : Deploy.active
+  end
+
+  # Creates a CSV for @deploys as a result of the search query limited to 1000 for speed
+  def as_csv
+    max = 1000
+    csv_limit = [(params[:limit].presence || max).to_i, max].min
+    deploys = @deploys.limit(csv_limit + 1).to_a
+    deploy_count = deploys.length
+    deploys.pop if deploy_count > csv_limit
+    CSV.generate do |csv|
+      csv << Deploy.csv_header
+      deploys.each { |deploy| csv << deploy.csv_line }
+      csv << ['-', 'count:', [deploy_count, csv_limit].min]
+      csv << ['-', 'params:', params]
+      if deploy_count > csv_limit
+        csv << ['-', 'There are more records. Generate a full report at']
+        csv << ['-', new_csv_export_url]
+      end
+    end
   end
 end

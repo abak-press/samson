@@ -1,6 +1,16 @@
+# frozen_string_literal: true
 require 'coderay'
 
 module DeploysHelper
+  # maps git changes to bootstrap classes
+  GIT_BOOTSTRAP_MAPPINGS = {
+    "added"    => "label-success",
+    "modified" => "label-info",
+    "changed"  => "label-info",
+    "removed"  => "label-danger",
+    "renamed"  => "label-info"
+  }.freeze
+
   def deploy_output
     output_hidden = false
     output = ActiveSupport::SafeBuffer.new
@@ -40,23 +50,16 @@ module DeploysHelper
   end
 
   def file_status_label(status)
-    mapping = {
-      "added"    => "success",
-      "modified" => "info",
-      "removed"  => "danger"
-    }
-
-    type = mapping[status]
-
-    content_tag :span, status[0].upcase, class: "label label-#{type}"
+    label = GIT_BOOTSTRAP_MAPPINGS.fetch(status)
+    content_tag :span, status[0].upcase, class: "label #{label}"
   end
 
   def file_changes_label(count, type)
-    content_tag :span, count.to_s, class: "label label-#{type}" unless count.zero?
+    content_tag :span, count.to_s, class: "label #{type}" unless count.zero?
   end
 
   def github_users(users)
-    users.map {|user| github_user_avatar(user) }.join(" ").html_safe
+    users.map { |user| github_user_avatar(user) }.join(" ").html_safe
   end
 
   def github_user_avatar(user)
@@ -67,7 +70,7 @@ module DeploysHelper
     end
   end
 
-  def buddy_check_button(project, deploy)
+  def buddy_check_button(_project, deploy)
     return unless deploy.waiting_for_buddy?
 
     button_class = ['btn']
@@ -80,7 +83,11 @@ module DeploysHelper
       button_class << 'btn-primary'
     end
 
-    link_to button_text, buddy_check_project_deploy_path(@project, @deploy), method: :post, class: button_class.join(' ')
+    link_to(
+      button_text,
+      buddy_check_project_deploy_path(@project, @deploy),
+      method: :post, class: button_class.join(' ')
+    )
   end
 
   def syntax_highlight(code, language = :ruby)
@@ -93,8 +100,35 @@ module DeploysHelper
     end
   end
 
+  def redeploy_button
+    return if @deploy.active?
+    html_options = {
+      class: 'btn btn-danger',
+      method: :post
+    }
+    if @deploy.succeeded?
+      html_options[:class] = 'btn btn-default'
+      html_options[:data] = {
+        toggle: 'tooltip',
+        placement: 'auto bottom'
+      }
+      html_options[:title] = 'Why? This deploy succeeded.'
+    end
+    link_to "Redeploy",
+      project_stage_deploys_path(
+        @project,
+        @deploy.stage,
+        deploy: { reference: @deploy.reference }
+      ),
+      html_options
+  end
+
   def stop_button(deploy: @deploy, **options)
     return unless @project && deploy
-    link_to 'Stop', [@project, deploy], options.merge(method: :delete, class: options.fetch(:class, 'btn btn-danger btn-xl'))
+    link_to(
+      'Stop',
+      [@project, deploy],
+      options.merge(method: :delete, class: options.fetch(:class, 'btn btn-danger btn-xl'))
+    )
   end
 end

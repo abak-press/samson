@@ -1,5 +1,5 @@
+# frozen_string_literal: true
 class CsvExportsController < ApplicationController
-
   rescue_from ActiveRecord::RecordNotFound do |exception|
     respond_to do |format|
       format.json { render json: {status: "not found"}.to_json, status: :not_found }
@@ -17,7 +17,23 @@ class CsvExportsController < ApplicationController
   end
 
   def new
-    @csv_export = CsvExport.new
+    respond_to do |format|
+      format.html do
+        if params[:type] == "users"
+          render :new_users
+        else
+          @csv_export = CsvExport.new
+        end
+      end
+      format.csv do
+        if params[:type] == "users"
+          options = user_filter
+          send_data UserCsvPresenter.to_csv(options), type: :csv, filename: "Users_#{options[:datetime]}.csv"
+        else
+          render body: "not found", status: :not_found
+        end
+      end
+    end
   end
 
   def show
@@ -53,6 +69,16 @@ class CsvExportsController < ApplicationController
     end
   end
 
+  def user_filter
+    options = {}
+    options[:inherited] = params[:inherited] == "true"
+    options[:deleted] = params[:deleted] == "true"
+    options[:project_id] = params[:project_id].to_i unless params[:project_id].to_i == 0
+    options[:user_id] = params[:user_id].to_i unless params[:user_id].to_i == 0
+    options[:datetime] = Time.now.strftime "%Y%m%d_%H%M"
+    options
+  end
+
   def deploy_filter
     # sanitizes parameters and generates a filter string for use with the Deploy.joins(:stage, :jobs)
     filter = {}
@@ -66,15 +92,18 @@ class CsvExportsController < ApplicationController
     end
 
     if start_date || end_date
-      start_date ||= Date.new(1900,1,1)
+      start_date ||= Date.new(1900, 1, 1)
       end_date ||= Date.today
       filter['deploys.created_at'] = (start_date..end_date)
     end
 
+    # We are filtering on a different joins if we enabled DeployGroups.  Deploy groups moves the correct
+    # location of the production value to the Environment model instead of the Stage model
+    filter_key = (DeployGroup.enabled? ? 'environments.production' : 'stages.production')
     if production = params[:production].presence
       case production
-      when 'Yes' then filter['stages.production'] = true
-      when 'No'  then filter['stages.production'] = false
+      when 'Yes'  then filter[filter_key] = true
+      when 'No'   then filter[filter_key] = false
       else
         raise "Invalid production filter #{production}"
       end

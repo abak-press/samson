@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -42,7 +43,7 @@ describe Admin::UsersController do
       it 'index page search box should contain the query' do
         get :index, search: 'Super Admin'
 
-        assert_template :index,  partial: '_search_bar'
+        assert_template :index, partial: '_search_bar'
         assert_select '#search' do
           assert_select '[name="search"]'
           assert_select '[type="text"]'
@@ -64,7 +65,7 @@ describe Admin::UsersController do
         json_response = JSON.parse response.body
         user_list = json_response['users']
         assert_not_nil user_list
-        user_list.each  do | u |
+        user_list.each do |u|
           user_info = User.find_by(name: u['name'])
           user_info.wont_be_nil
           user_info.email.must_equal u['email']
@@ -72,7 +73,7 @@ describe Admin::UsersController do
       end
 
       it 'succeeds and fetches a single user' do
-        get :index, search: 'Super Admin' , format: :json
+        get :index, search: 'Super Admin', format: :json
 
         response.success?.must_equal true
         assigns(:users).must_equal [users(:super_admin)]
@@ -90,39 +91,13 @@ describe Admin::UsersController do
     end
 
     describe 'a csv GET to #index' do
-      before do
+      it 'redirects to csv_exports#users' do
         get :index, format: :csv
-      end
-
-      it 'succeeds, accurate and complete' do
-        response.success?.must_equal true
-        csv_response = CSV.parse(response.body)
-        csv_headers = csv_response.shift
-        rowcount = csv_headers.pop.to_i
-        usercount = csv_headers.pop.to_i
-        User.count.must_equal usercount
-        (User.count + UserProjectRole.joins(:user, :project).count).must_equal rowcount
-        rowcount.must_equal csv_response.length
-        assert_not_nil csv_response
-        csv_response.each do |u|
-          user_info = User.find_by(id: u[0])
-          user_info.wont_be_nil
-          user_info.name.must_equal u[1]
-          user_info.email.must_equal u[2]
-          if u[3] == ""
-            u[4].must_equal "SYSTEM"
-            user_info.role.name.must_equal u[5]
-          else
-            user_project_role_info = UserProjectRole.find_by(user_id: u[0], project_id: u[3])
-            user_project_role_info.wont_be_nil
-            user_project_role_info.project.name.must_equal u[4]
-            user_project_role_info.role.name.must_equal u[5]
-          end
-        end
+        assert_redirected_to new_csv_export_path(format: :csv, type: :users)
       end
     end
 
-    describe 'a GET to #show' do
+    describe '#show' do
       let(:modified_user) { users(:viewer) }
 
       it 'succeeds' do
@@ -133,7 +108,7 @@ describe Admin::UsersController do
   end
 
   as_a_super_admin do
-    describe 'a PUT to #update' do
+    describe '#update' do
       let(:modified_user) { users(:viewer) }
 
       it 'updates the user role' do
@@ -144,7 +119,7 @@ describe Admin::UsersController do
 
       it 'clears the access request pending flag' do
         modified_user.update!(access_request_pending: true)
-        put :update, {id: modified_user.id, user: {role_id: Role::DEPLOYER.id}}
+        put :update, id: modified_user.id, user: {role_id: Role::DEPLOYER.id}
         modified_user.reload.access_request_pending.must_equal false
       end
 
@@ -154,7 +129,7 @@ describe Admin::UsersController do
       end
     end
 
-    describe 'a DELETE to #destroy' do
+    describe '#destroy' do
       let(:modified_user) { users(:viewer) }
 
       it 'soft delete the user' do

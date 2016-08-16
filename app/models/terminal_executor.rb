@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'open3'
 
 # Executes commands in a fake terminal. The output will be streamed to a
@@ -16,10 +17,10 @@ class TerminalExecutor
 
   attr_reader :pid, :pgid, :output
 
-  def initialize(output, verbose: false, project: nil)
+  def initialize(output, verbose: false, deploy: nil)
     @output = output
     @verbose = verbose
-    @project = project
+    @deploy = deploy
   end
 
   def execute!(*commands)
@@ -40,20 +41,20 @@ class TerminalExecutor
   private
 
   def resolve_secrets(command)
-    allowed_namespaces = ['global']
-    Environment.pluck(:permalink).each do |link|
-      # allow access to global in all envs
-      allowed_namespaces << "#{link}/global"
-      allowed_namespaces << "#{link}/#{@project.permalink}" if @project
-    end
-    command.gsub(%r{\b#{SECRET_PREFIX}(#{SecretStorage::SECRET_KEY_REGEX})\b}) do
+    deploy_groups = @deploy.try(:stage).try(:deploy_groups) || []
+    project = @deploy.try(:project)
+    resolver = Kubernetes::ResourceTemplate::SecretKeyResolver.new(project, deploy_groups)
+
+    result = command.gsub(/\b#{SECRET_PREFIX}(#{SecretStorage::SECRET_KEY_REGEX})\b/) do
       key = $1
-      if key.start_with?(*allowed_namespaces.map { |n| "#{n}/" })
+      if resolver.expand!(key)
         SecretStorage.read(key, include_secret: true).fetch(:value)
-      else
-        raise ActiveRecord::RecordNotFound, "Not allowed to access key #{key}"
       end
     end
+
+    resolver.verify!
+
+    result
   end
 
   def execute_command!(command)
@@ -63,13 +64,14 @@ class TerminalExecutor
       options = {in: '/dev/null', unsetenv_others: true, pgroup: true}
 
       # http://stackoverflow.com/questions/1401002/trick-an-application-into-thinking-its-stdin-is-interactive-not-a-pipe
-      script = if RbConfig::CONFIG["target_os"].include?("darwin")
-        "script -q /dev/null sh #{f.path}"
-      else
-        "script -qfec 'sh #{f.path}'"
-      end
+      script =
+        if RbConfig::CONFIG["target_os"].include?("darwin")
+          "script -q /dev/null sh #{f.path}"
+        else
+          "script -qfec 'sh #{f.path}'"
+        end
 
-      Open3.popen2e(whitelisted_env, script, options)  do |_stdin, oe, wait_thr|
+      Open3.popen2e(whitelisted_env, script, options) do |_stdin, oe, wait_thr|
         @pid = wait_thr.pid
 
         @pgid = begin

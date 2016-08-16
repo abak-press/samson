@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+# rubocop:disable Metrics/LineLength
 require_relative '../test_helper'
 
 SingleCov.covered!

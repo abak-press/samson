@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Kubernetes
   # Convenience wrapper around the 'Service' object we can get from the K8S API
   class Service
@@ -67,11 +68,12 @@ module Kubernetes
           next if subset[key].blank?
 
           subset[key].each do |address|
-            if address.targetRef.kind == 'Pod'
-              results << OpenStruct.new(pod_ip: address.ip,
-                                        pod_name: address.targetRef.name,
-                                        ready?: (key == :addresses))
-            end
+            next unless address.targetRef.kind == 'Pod'
+            results << OpenStruct.new(
+              pod_ip: address.ip,
+              pod_name: address.targetRef.name,
+              ready?: (key == :addresses)
+            )
           end
         end
       end
@@ -97,8 +99,10 @@ module Kubernetes
     end
 
     def fetch_endpoint
-      @endpoint_object = client.get_endpoints(namespace: namespace,
-                                              field_selector: "metadata.name=#{name}").first
+      @endpoint_object = client.get_endpoints(
+        namespace: namespace,
+        field_selector: "metadata.name=#{name}"
+      ).first
     end
 
     def client

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 source 'https://rubygems.org'
 
 ruby File.read('.ruby-version').strip
@@ -14,6 +15,7 @@ group :preload do
   gem 'active_model_serializers'
   gem 'paper_trail'
   gem 'soft_deletion'
+  gem 'doorkeeper'
 
   # Logging
   gem 'lograge'
@@ -31,6 +33,7 @@ gem 'omniauth-oauth2'
 gem 'omniauth-github'
 gem 'omniauth-google-oauth2'
 gem 'omniauth-ldap'
+gem 'omniauth-gitlab', '~> 1.0.0'
 gem 'octokit'
 gem 'faraday-http-cache'
 gem 'warden'
@@ -42,10 +45,11 @@ gem 'net-http-persistent'
 gem 'concurrent-ruby'
 gem 'vault'
 gem 'docker-api'
+gem 'warden-doorkeeper'
 
 # Temporarily using our fork, while waiting for this PR to get merged:
 # https://github.com/abonas/kubeclient/pull/127
-gem 'kubeclient', github: 'zendesk/kubeclient', branch: 'samson-gem-branch'
+gem 'kubeclient', '= 1.1.4'
 
 # treat included plugins like gems
 Dir[File.join(Bundler.root, 'plugins/*/')].each { |f| gemspec path: f }
@@ -92,13 +96,17 @@ group :assets do
     gem 'rails-assets-rickshaw'
     gem 'rails-assets-typeahead.js'
     gem 'rails-assets-underscore'
-    gem 'rails-assets-vis'
+    gem 'rails-assets-vis', '~> 4.10.0'
     gem 'rails-assets-x-editable'
     gem 'rails-assets-message-center'
     gem 'rails-assets-angular-ui-router'
     gem 'rails-assets-angular-truncate-2'
     gem 'rails-assets-jstimezonedetect'
     gem 'rails-assets-jquery-cookie'
+    gem 'rails-assets-datatables.net'
+    gem 'rails-assets-datatables.net-bs'
+    gem 'rails-assets-datatables.net-fixedcolumns'
+    gem 'rails-assets-datatables.net-fixedcolumns-bs'
   end
 end
 
@@ -112,8 +120,10 @@ group :development, :test do
   gem 'byebug'
   gem 'bootscale'
   gem 'pry-rails'
+  gem 'pry'
   gem 'awesome_print'
   gem 'brakeman'
+  gem 'rubocop'
 end
 
 group :test do

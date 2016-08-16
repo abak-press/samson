@@ -1,16 +1,27 @@
+# frozen_string_literal: true
 require File.expand_path('../boot', __FILE__)
 
 require 'rails/all'
 
 Bundler.require(:preload)
 Bundler.require(:assets) if Rails.env.development? || ENV["PRECOMPILE"]
+
 if ['development', 'staging'].include?(Rails.env)
   require 'better_errors'
   require 'rack-mini-profiler'
 end
 
+if ['staging', 'production'].include?(Rails.env)
+  require 'airbrake/railtie'
+end
 
-Dotenv.load(Bundler.root.join(Rails.env.test? ? '.env.test' : '.env'))
+if Rails.env.test?
+  Dotenv.overload(Bundler.root.join('.env.test'))
+else
+  Dotenv.load(Bundler.root.join('.env'))
+end
+
+require "#{Bundler.root}/lib/samson/env_check"
 
 module Samson
   class Application < Rails::Application
@@ -26,8 +37,14 @@ module Samson
     # config.i18n.load_path += Dir[Rails.root.join('my', 'locales', '*.{rb,yml}').to_s]
     # config.i18n.default_locale = :de
     #
+    deprecated_url = ->(var) do
+      url = ENV[var].presence
+      return url if !url || url.start_with?('http')
+      warn "Using deprecated url without protocol for #{var}"
+      "https://#{url}"
+    end
 
-    config.autoload_paths += Dir["#{config.root}/lib/**/"]
+    config.eager_load_paths << "#{config.root}/lib"
 
     if Rails.env.test?
       config.cache_store = :memory_store
@@ -65,6 +82,11 @@ module Samson
     config.samson.email.prefix = ENV["EMAIL_PREFIX"].presence || "DEPLOY"
     config.samson.email.sender_domain = ENV["EMAIL_SENDER_DOMAIN"].presence || "samson-deployment.com"
 
+    # Email notifications
+    config.samson.project_created_email = ENV["PROJECT_CREATED_NOTIFY_ADDRESS"]
+    config.samson.project_deleted_email = ENV["PROJECT_DELETED_NOTIFY_ADDRESS"].presence ||
+      ENV["PROJECT_CREATED_NOTIFY_ADDRESS"]
+
     # Whether or not jobs are actually executed.
     config.samson.enable_job_execution = true
 
@@ -79,9 +101,9 @@ module Samson
     config.samson.github.organization = ENV["GITHUB_ORGANIZATION"].presence
     config.samson.github.admin_team = ENV["GITHUB_ADMIN_TEAM"].presence
     config.samson.github.deploy_team = ENV["GITHUB_DEPLOY_TEAM"].presence
-    config.samson.github.web_url = ENV["GITHUB_WEB_URL"].presence || 'github.com'
-    config.samson.github.api_url = ENV["GITHUB_API_URL"].presence || 'api.github.com'
-    config.samson.github.status_url = ENV["GITHUB_STATUS_URL"].presence || 'status.github.com'
+    config.samson.github.web_url = deprecated_url.call("GITHUB_WEB_URL") || 'https://github.com'
+    config.samson.github.api_url = deprecated_url.call("GITHUB_API_URL") || 'https://api.github.com'
+    config.samson.github.status_url = deprecated_url.call("GITHUB_STATUS_URL") || 'https://status.github.com'
     config.samson.references_cache_ttl = ENV['REFERENCES_CACHE_TTL'].presence || 10.minutes
 
     # Configuration for LDAP
@@ -94,10 +116,14 @@ module Samson
     config.samson.ldap.bind_dn = ENV["LDAP_BINDDN"].presence
     config.samson.ldap.password = ENV["LDAP_PASSWORD"].presence
 
+    config.samson.gitlab = ActiveSupport::OrderedOptions.new
+    config.samson.gitlab.web_url = deprecated_url.call("GITLAB_URL") || 'https://gitlab.com'
+
     config.samson.auth = ActiveSupport::OrderedOptions.new
-    config.samson.auth.github = ENV["AUTH_GITHUB"] != "0"
-    config.samson.auth.google = ENV["AUTH_GOOGLE"] != "0"
-    config.samson.auth.ldap = ENV["AUTH_LDAP"] == "1"
+    config.samson.auth.github = Samson::EnvCheck.set?("AUTH_GITHUB")
+    config.samson.auth.google = Samson::EnvCheck.set?("AUTH_GOOGLE")
+    config.samson.auth.ldap = Samson::EnvCheck.set?("AUTH_LDAP")
+    config.samson.auth.gitlab = Samson::EnvCheck.set?("AUTH_GITLAB")
 
     config.samson.docker = ActiveSupport::OrderedOptions.new
     config.samson.docker.registry = ENV['DOCKER_REGISTRY'].presence
@@ -114,14 +140,15 @@ module Samson
     }
 
     config.action_controller.action_on_unpermitted_parameters = :raise
-    
+
     config.active_job.queue_adapter = :sucker_punch
     config.samson.export_job = ActiveSupport::OrderedOptions.new
     config.samson.export_job.downloaded_age = (ENV['EXPORT_JOB_DOWNLOADED_AGE'] || 12.hours).to_i
     config.samson.export_job.max_age = (ENV['EXPORT_JOB_MAX_AGE'] || 1.day).to_i
 
     if !Rails.env.test? && ENV['SERVER_MODE'] && !ENV['PRECOMPILE']
-      initializer :execute_job, after: :set_routes_reloader_hook do # flowdock uses routes: run after the routes are loaded
+      # flowdock uses routes: run after the routes are loaded
+      initializer :execute_job, after: :set_routes_reloader_hook do
         JobExecution.enabled = true
 
         Job.running.each(&:stop!)
@@ -142,10 +169,12 @@ module Samson
     unless ENV['PRECOMPILE']
       config.after_initialize do
         # Token used to request badges
-        config.samson.badge_token = Digest::MD5.hexdigest('badge_token' << Samson::Application.config.secret_key_base)
+        config.samson.badge_token = \
+          Digest::MD5.hexdigest('badge_token'.dup + Samson::Application.config.secret_key_base)
       end
     end
   end
 end
 
 require 'samson/hooks'
+require "#{Rails.root}/lib/samson/logging"

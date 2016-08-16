@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -5,6 +6,8 @@ SingleCov.covered!
 describe StatusHelper do
   include ERB::Util
   include DateTimeHelper
+
+  let(:current_user) { users(:viewer) }
 
   describe "#status_panel" do
     it "accepts a deploy" do

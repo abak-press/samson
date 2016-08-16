@@ -1,97 +1,70 @@
+# frozen_string_literal: true
 require_relative '../../../test_helper'
 
-SingleCov.covered! uncovered: 8
+SingleCov.covered!
 
 describe Kubernetes::Api::Pod do
   let(:pod_name) { 'test_name' }
-
-  describe 'using kubeclient pod' do
-    describe 'with running pod' do
-      let(:pod) { Kubernetes::Api::Pod.new(build_kubeclient_pod) }
-
-      it 'returns proper name' do
-        pod.name.must_equal pod_name
-      end
-
-      it 'correctly identifies ready state' do
-        assert pod.live?
-      end
-    end
-
-    describe 'with dead pod' do
-      let(:kubeclient_pod) { build_kubeclient_pod }
-
-      it 'correctly identifies not ready state using phase' do
-        kubeclient_pod.status.phase = 'Failed'
-        pod = Kubernetes::Api::Pod.new(kubeclient_pod)
-        refute pod.live?
-      end
-
-      it 'correctly identifies not ready state using condition status' do
-        kubeclient_pod.status.conditions.first.status = 'False'
-        pod = Kubernetes::Api::Pod.new(kubeclient_pod)
-        refute pod.live?
-      end
-
-      it 'correctly identifies not ready state when ready condition missing' do
-        kubeclient_pod.status.conditions.first.type = 'Unknown'
-        pod = Kubernetes::Api::Pod.new(kubeclient_pod)
-        refute pod.live?
-      end
-
-      it 'correctly identifies not ready state when conditions missing' do
-        kubeclient_pod.status.delete_field 'conditions'
-        pod = Kubernetes::Api::Pod.new(kubeclient_pod)
-        refute pod.live?
-      end
-    end
+  let(:pod_attributes) do
+    data = {
+      metadata: {
+        name: pod_name,
+        namespace: 'the-namespace',
+        labels: {
+          deploy_group_id: '123',
+          role_id: '234',
+        }
+      },
+      status: {
+        phase: "Running",
+        conditions: [{type: "Ready", status: "True"}],
+        containerStatuses: [{restartCount: 0}]
+      },
+      spec: {
+        containers: [
+          {name: 'container1'}
+        ]
+      }
+    }
+    Kubeclient::Pod.new(JSON.load(data.to_json))
   end
+  let(:pod) { Kubernetes::Api::Pod.new(pod_attributes) }
 
-  describe 'using watch notice' do
-    describe 'with running pod' do
-      let(:pod) { Kubernetes::Api::Pod.new(build_watch_notice.object) }
-
-      it 'returns proper name' do
-        pod.name.must_equal pod_name
-      end
-
-      it 'correctly identifies ready state' do
-        assert pod.live?
-      end
+  describe '#live?' do
+    it "is live" do
+      assert pod.live?
     end
 
-    describe 'with dead pod' do
-      let(:watch_notice_object) { build_watch_notice.object }
+    it "is not live when failed" do
+      pod_attributes.status.phase = 'Failed'
+      refute pod.live?
+    end
 
-      it 'correctly identifies not ready state using phase' do
-        watch_notice_object.status.phase = 'Failed'
-        pod = Kubernetes::Api::Pod.new(watch_notice_object)
+    it "is not live when ready is false" do
+      pod_attributes.status.conditions.first.status = 'False'
+      refute pod.live?
+    end
+
+    it "is not live without ready state" do
+      pod_attributes.status.conditions.first.type = 'Unknown'
+      refute pod.live?
+    end
+
+    describe 'without conditions' do
+      before { pod_attributes.status.delete_field 'conditions' }
+
+      it "is not live" do
         refute pod.live?
       end
 
-      it 'correctly identifies not ready state using condition status' do
-        watch_notice_object.status.conditions.first['status'] = 'False'
-        pod = Kubernetes::Api::Pod.new(watch_notice_object)
-        refute pod.live?
-      end
-
-      it 'correctly identifies not ready state when ready condition missing' do
-        watch_notice_object.status.conditions.first['type'] = 'Unknown'
-        pod = Kubernetes::Api::Pod.new(watch_notice_object)
-        refute pod.live?
-      end
-
-      it 'correctly identifies not ready state when conditions missing' do
-        watch_notice_object.status.delete_field 'conditions'
-        pod = Kubernetes::Api::Pod.new(watch_notice_object)
-        refute pod.live?
+      it "is live when it is a finished job" do
+        pod_attributes.status.phase = 'Succeeded'
+        assert pod.live?
       end
     end
   end
 
   describe "#restarted?" do
-    let(:pod) { Kubernetes::Api::Pod.new build_kubeclient_pod }
-
     it "is not restarted" do
       refute pod.restarted?
     end
@@ -112,25 +85,33 @@ describe Kubernetes::Api::Pod do
     end
   end
 
-  private
-
-  def build_kubeclient_pod
-    data = {
-      metadata: {name: pod_name},
-      status: {
-        phase: "Running",
-        conditions: [{type: "Ready", status: "True"}],
-        containerStatuses: [{restartCount: 0}]
-      }
-    }
-    Kubeclient::Pod.new(JSON.load(data.to_json))
+  describe "#name" do
+    it 'reads ' do
+      pod.name.must_equal 'test_name'
+    end
   end
 
-  def build_watch_notice
-    Kubeclient::Common::WatchNotice.new(
-        JSON.parse(
-            %({"type": "MODIFIED", "object": {"metadata": {"name": "#{pod_name}"},
-                                              "status": {"phase": "Running",
-                                                         "conditions": [{"type": "Ready", "status": "True"}]}}})))
+  describe "#namespace" do
+    it "reads" do
+      pod.namespace.must_equal 'the-namespace'
+    end
+  end
+
+  describe "#deploy_group_id" do
+    it 'is the label' do
+      pod.deploy_group_id.must_equal 123
+    end
+  end
+
+  describe "#role_id" do
+    it 'is the label' do
+      pod.role_id.must_equal 234
+    end
+  end
+
+  describe "#containers" do
+    it 'reads' do
+      pod.containers.first.name.must_equal 'container1'
+    end
   end
 end

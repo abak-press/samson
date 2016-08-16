@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Samson
   module Hooks
     class UserError < StandardError
@@ -7,6 +8,7 @@ module Samson
       :stage_form,
       :stage_show,
       :project_form,
+      :build_new,
       :deploy_group_show,
       :deploy_group_form,
       :deploy_group_table_header,
@@ -25,6 +27,7 @@ module Samson
       :stage_permitted_params,
       :deploy_permitted_params, # for external plugin
       :project_permitted_params,
+      :build_params,
       :before_deploy,
       :after_deploy_setup,
       :after_deploy,
@@ -33,14 +36,16 @@ module Samson
       :after_job_execution,
       :job_additional_vars,
       :deploy_group_permitted_params,
-      :edit_deploy_group
+      :edit_deploy_group,
+      :buildkite_release_params,
+      :release_deploy_conditions
     ].freeze
 
-    INTERNAL_HOOKS = [ :class_defined ]
+    INTERNAL_HOOKS = [:class_defined].freeze
 
     KNOWN = VIEW_HOOKS + EVENT_HOOKS + INTERNAL_HOOKS
 
-    @@hooks = {}
+    @hooks = {}
 
     class Plugin
       attr_reader :name, :folder
@@ -58,7 +63,7 @@ module Samson
         lib = "#{@folder}/lib"
         $LOAD_PATH << lib
         require @path
-        engine.config.autoload_paths << lib
+        engine.config.eager_load_paths << lib
       end
 
       def add_migrations
@@ -73,7 +78,7 @@ module Samson
       end
 
       def add_assets_to_precompile
-        engine.config.assets.precompile += %W(#{name}/application.css #{name}/application.js)
+        engine.config.assets.precompile += %W[#{name}/application.css #{name}/application.js]
       end
 
       def engine
@@ -176,13 +181,14 @@ module Samson
           # Load test_helper.rb if it exists
           # TODO maybe not necessary ...
           test_helper_file = File.join(plugin.folder, 'test', 'test_helper.rb')
-          require test_helper_file if File.exists?(test_helper_file)
+          require test_helper_file if File.exist?(test_helper_file)
         end
       end
 
       def render_javascripts(view)
         Samson::Hooks.plugins.each do |plugin|
-          next unless File.exists?(plugin.engine.config.root.join("app/assets/javascripts/#{plugin.name}/application.js"))
+          js = plugin.engine.config.root.join("app/assets/javascripts/#{plugin.name}/application.js")
+          next unless File.exist?(js)
           view.concat(view.javascript_include_tag("#{plugin.name}/application.js"))
         end
         nil
@@ -190,7 +196,8 @@ module Samson
 
       def render_stylesheets(view)
         Samson::Hooks.plugins.each do |plugin|
-          next unless File.exists?(plugin.engine.config.root.join("app/assets/stylesheets/#{plugin.name}/application.css"))
+          css = plugin.engine.config.root.join("app/assets/stylesheets/#{plugin.name}/application.css")
+          next unless File.exist?(css)
           view.concat(view.stylesheet_link_tag("#{plugin.name}/application.css"))
         end
         nil
@@ -205,7 +212,7 @@ module Samson
 
       def hooks(*args)
         raise "Using unsupported hook #{args.inspect}" unless KNOWN.include?(args.first)
-        (@@hooks[args] ||= [])
+        (@hooks[args] ||= [])
       end
 
       # Loads the PLUGINS environment variable. See docs/plugins.md for more info.

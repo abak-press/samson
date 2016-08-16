@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'octokit'
 
 class Integrations::TddiumController < Integrations::BaseController
@@ -17,7 +18,7 @@ class Integrations::TddiumController < Integrations::BaseController
     contains_skip_token?(data.commit.message)
 
   rescue Octokit::Error => e
-    Rails.logger.info("Error trying to grab commit: #{e.message}")
+    record_log :info, "Error trying to grab commit: #{e.message}"
     # We'll assume that if we don't hear back, don't skip
     false
   end

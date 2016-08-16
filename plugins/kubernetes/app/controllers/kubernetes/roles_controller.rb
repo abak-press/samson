@@ -1,7 +1,8 @@
+# frozen_string_literal: true
 class Kubernetes::RolesController < ApplicationController
   include CurrentProject
 
-  DEPLOYER_ACCESS = [:index, :show]
+  DEPLOYER_ACCESS = [:index, :show, :example].freeze
   before_action :authorize_project_deployer!, only: DEPLOYER_ACCESS
   before_action :authorize_project_admin!, except: DEPLOYER_ACCESS
   before_action :find_role, only: [:show, :update, :destroy]
@@ -15,8 +16,15 @@ class Kubernetes::RolesController < ApplicationController
   end
 
   def seed
-    Kubernetes::Role.seed!(@project, params.require(:ref))
+    begin
+      Kubernetes::Role.seed!(@project, params.require(:ref))
+    rescue Samson::Hooks::UserError
+      flash[:error] = $!.message
+    end
     redirect_to action: :index
+  end
+
+  def example
   end
 
   def new
@@ -26,7 +34,7 @@ class Kubernetes::RolesController < ApplicationController
   def create
     @role = Kubernetes::Role.new(role_params.merge(project: @project))
     if @role.save
-      redirect_to [@project, @role]
+      redirect_to action: :index
     else
       render :new
     end
@@ -37,7 +45,7 @@ class Kubernetes::RolesController < ApplicationController
 
   def update
     if @role.update_attributes(role_params)
-      redirect_to [@project, @role]
+      redirect_to action: :index
     else
       render :show
     end
@@ -55,6 +63,6 @@ class Kubernetes::RolesController < ApplicationController
   end
 
   def role_params
-    params.require(:kubernetes_role).permit(:name, :config_file, :service_name, :ram, :cpu, :replicas, :deploy_strategy)
+    params.require(:kubernetes_role).permit(:name, :config_file, :service_name, :resource_name)
   end
 end

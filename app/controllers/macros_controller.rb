@@ -1,9 +1,9 @@
+# frozen_string_literal: true
 class MacrosController < ApplicationController
   include CurrentProject
 
   before_action :authorize_project_deployer!
-  before_action :authorize_project_admin!, only: [:new, :create, :edit, :update]
-  before_action :authorize_super_admin!, only: [:destroy]
+  before_action :authorize_project_admin!, only: [:new, :create, :edit, :update, :destroy]
   before_action :find_macro, only: [:edit, :update, :execute, :destroy]
 
   def index
@@ -36,10 +36,13 @@ class MacrosController < ApplicationController
   end
 
   def execute
-    macro_service = MacroService.new(@project, current_user)
-    job = macro_service.execute!(@macro)
+    job = @project.jobs.build(
+      user: current_user,
+      command: @macro.script,
+      commit: @macro.reference
+    )
 
-    if job.persisted?
+    if job.save
       JobExecution.start_job(JobExecution.new(job.commit, job))
       redirect_to [@project, job]
     else

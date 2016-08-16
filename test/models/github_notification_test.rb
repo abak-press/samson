@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
-SingleCov.covered! uncovered: 1
+SingleCov.covered!
 
 describe GithubNotification do
   let(:project) { stub(name: "Glitter", github_repo: "glitter/glitter", to_param: "3-glitter") }
@@ -11,12 +12,11 @@ describe GithubNotification do
   let(:endpoint) { "https://api.github.com/repos/glitter/glitter/issues/9/comments" }
 
   describe 'when there are pull requests' do
-    let(:pull_requests) { stub(number: 9)}
+    let(:pull_requests) { stub(number: 9) }
 
     it "adds a comment" do
       comment = stub_request(:post, endpoint)
       notification.deliver
-
       assert_requested comment
     end
   end

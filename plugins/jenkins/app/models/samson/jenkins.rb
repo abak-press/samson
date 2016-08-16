@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'jenkins_api_client'
 
 module Samson
@@ -16,7 +17,12 @@ module Samson
     def build
       opts = {'build_start_timeout' => 60}
       originated_from = deploy.project.name + '_' + deploy.stage.name + '_' + deploy.reference
-      client.job.build(job_name, {'buildStartedBy' => deploy.user.name, 'originatedFrom' => originated_from, 'commit' => deploy.job.commit}, opts).to_i
+      client.job.build(job_name, {
+        buildStartedBy: deploy.user.name,
+        originatedFrom: originated_from,
+        commit: deploy.job.commit,
+        deployUrl: deploy.url
+      }, opts).to_i
     rescue Timeout::Error => e
       "Jenkins '#{job_name}' build failed to start in a timely manner.  #{e.class} #{e}"
     rescue JenkinsApi::Exceptions::ApiException => e

@@ -1,5 +1,7 @@
 //= require typeahead.js.js
 //= require changesets
+//= require jquery-mentions-input/jquery.elastic.source
+//= require jquery-mentions-input/jquery.mentionsInput
 
 var following = true; // shared with stream.js
 
@@ -43,6 +45,16 @@ $(function () {
           }
         });
       }
+  });
+
+  // navigate to the correct tab if we opened this page with a hash/fragment/anchor
+  if(window.location.hash !== "") {
+    $('.nav-tabs a[href="' + window.location.hash + '"]').trigger('click');
+  }
+
+  // when clicking a tab with a hash href, apply that hash to the location to make url copy-pasting possible
+  $('.nav-tabs a[href^="#"]').click(function(){
+    window.location.hash = this.hash;
   });
 
   var prefetchUrl = $reference.data("prefetchUrl");
@@ -337,6 +349,8 @@ $(function () {
 
     highlightAndScroll();
   }());
+
+  $('[data-toggle="tooltip"]').tooltip();
 });
 
 function toggleOutputToolbar() {

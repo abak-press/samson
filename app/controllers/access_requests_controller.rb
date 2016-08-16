@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class AccessRequestsController < ApplicationController
   before_action :check_if_enabled
 
@@ -25,6 +26,6 @@ class AccessRequestsController < ApplicationController
   private
 
   def check_if_enabled
-    raise ActionController::RoutingError.new('Not Found') unless self.class.feature_enabled?
+    raise ActionController::RoutingError, 'Not Found' unless self.class.feature_enabled?
   end
 end

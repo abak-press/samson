@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module SamsonNewRelic
   class Engine < Rails::Engine
   end
@@ -12,5 +13,8 @@ Samson::Hooks.callback :stage_permitted_params do
 end
 
 Samson::Hooks.callback :stage_clone do |old_stage, new_stage|
-  new_stage.new_relic_applications.build(old_stage.new_relic_applications.map { |app| app.attributes.except("id", "updated_at", "created_at") })
+  old_applications = old_stage.new_relic_applications.map do |app|
+    app.attributes.except("id", "updated_at", "created_at")
+  end
+  new_stage.new_relic_applications.build(old_applications)
 end

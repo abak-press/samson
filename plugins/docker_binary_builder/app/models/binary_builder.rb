@@ -1,12 +1,13 @@
+# frozen_string_literal: true
 class BinaryBuilder
-  DOCKER_BUILD_FILE = 'Dockerfile.build'.freeze
-  BUILD_SCRIPT = '/app/build.sh'.freeze
-  ARTIFACTS_FILE = 'artifacts.tar'.freeze
-  ARTIFACTS_FILE_PATH = "/app/#{ARTIFACTS_FILE}".freeze
-  DOCKER_HOST_CACHE_DIR = '/opt/samson_build_cache'.freeze
-  CONTAINER_CACHE_DIR = '/build/cache'.freeze
-  TAR_LONGLINK = '././@LongLink'.freeze
-  PRE_BUILD_SCRIPT = 'pre_binary_build.sh'.freeze
+  DOCKER_BUILD_FILE = 'Dockerfile.build'
+  BUILD_SCRIPT = '/app/build.sh'
+  ARTIFACTS_FILE = 'artifacts.tar'
+  ARTIFACTS_FILE_PATH = "/app/#{ARTIFACTS_FILE}"
+  DOCKER_HOST_CACHE_DIR = '/opt/samson_build_cache'
+  CONTAINER_CACHE_DIR = '/build/cache'
+  TAR_LONGLINK = '././@LongLink'
+  PRE_BUILD_SCRIPT = 'pre_binary_build.sh'
 
   def initialize(dir, project, reference, output, executor = nil)
     @dir = dir
@@ -56,7 +57,7 @@ class BinaryBuilder
   end
 
   def build_file_exist?
-    File.exists? File.join(@dir, DOCKER_BUILD_FILE)
+    File.exist? File.join(@dir, DOCKER_BUILD_FILE)
   end
 
   def start_build_script
@@ -114,47 +115,39 @@ class BinaryBuilder
       fail "Unsupported Docker api version '#{docker_api_version}', use at least v1.15"
     elsif api_version_major == 1 && api_version_minor <= 22
       options.merge!(
-        {
-          'Volumes' => {
-            DOCKER_HOST_CACHE_DIR => {}
-          },
-          'HostConfig' => {
-            'Binds' => ["#{DOCKER_HOST_CACHE_DIR}:#{CONTAINER_CACHE_DIR}"],
-            'NetworkMode' => 'host'
-          }
+        'Volumes' => {
+          DOCKER_HOST_CACHE_DIR => {}
+        },
+        'HostConfig' => {
+          'Binds' => ["#{DOCKER_HOST_CACHE_DIR}:#{CONTAINER_CACHE_DIR}"],
+          'NetworkMode' => 'host'
         }
       )
     else
       options.merge!(
-        {
-          'Mounts' => [
-            {
-              'Source' => DOCKER_HOST_CACHE_DIR,
-              'Destination' => CONTAINER_CACHE_DIR,
-              'Mode' => 'rw,Z',
-              'RW' => true
-            }
-          ],
-          'HostConfig' => {
-            'NetworkMode' => 'host'
+        'Mounts' => [
+          {
+            'Source' => DOCKER_HOST_CACHE_DIR,
+            'Destination' => CONTAINER_CACHE_DIR,
+            'Mode' => 'rw,Z',
+            'RW' => true
           }
+        ],
+        'HostConfig' => {
+          'NetworkMode' => 'host'
         }
       )
     end
   end
 
   def image_name
-    "#{@project.send(:permalink_base)}_build:#{@git_reference}".downcase
+    "#{@project.send(:permalink_base)}_build:#{@git_reference.parameterize}".downcase
   end
 
   def create_build_image
     @output_stream.puts 'Now building the build container...'
     Docker::Image.build_from_dir(
-      @dir,
-      {
-        'dockerfile' => DOCKER_BUILD_FILE,
-        't' => image_name
-      }
+      @dir, 'dockerfile' => DOCKER_BUILD_FILE, 't' => image_name
     ) { |chunk| @output_stream.write chunk }
   end
 

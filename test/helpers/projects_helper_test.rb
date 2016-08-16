@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+# rubocop:disable Metrics/LineLength
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -10,16 +12,16 @@ describe ProjectsHelper do
 
     it "star a project" do
       current_user.stubs(:starred_project?).returns(false)
-      link =  star_for_project(project)
-      assert_includes link, %{href="/stars?id=#{project.to_param}"}
-      assert_includes link, %{data-method="post"}
+      link = star_for_project(project)
+      assert_includes link, %(href="/stars?id=#{project.to_param}")
+      assert_includes link, %(data-method="post")
     end
 
     it "unstar a project" do
       current_user.stubs(:starred_project?).returns(true)
-      link =  star_for_project(project)
-      assert_includes link, %{href="/stars/#{project.to_param}"}
-      assert_includes link, %{data-method="delete"}
+      link = star_for_project(project)
+      assert_includes link, %(href="/stars/#{project.to_param}")
+      assert_includes link, %(data-method="delete")
     end
 
     it 'returns the deployment alert data' do
@@ -58,6 +60,49 @@ describe ProjectsHelper do
     it "works" do
       @project = projects(:test)
       deployer_for_project?.must_equal true
+    end
+  end
+
+  describe "#repository_web_link" do
+    let(:current_user) { users(:admin) }
+    let(:stage) { stages(:test_staging) }
+
+    def config_mock
+      Rails.application.config.samson.github.stub(:web_url, "github.com") do
+        Rails.application.config.samson.gitlab.stub(:web_url, "localhost") do
+          yield
+        end
+      end
+    end
+
+    it "makes github repository web link" do
+      config_mock do
+        project = projects(:test)
+        project.name = "Github Project"
+        project.repository_url = "https://github.com/bar/foo.git"
+
+        link = repository_web_link(project)
+        assert_includes link, "View repository on GitHub"
+      end
+    end
+
+    it "makes gitlab repository web link" do
+      config_mock do
+        project = projects(:test)
+        project.name = "Gitlab Project"
+        project.repository_url = "http://localhost/bar/foo.git"
+
+        link = repository_web_link(project)
+        assert_includes link, "View repository on Gitlab"
+      end
+    end
+
+    it "makes github repository web link" do
+      config_mock do
+        project = projects(:test)
+        link = repository_web_link(project)
+        assert_equal link, ""
+      end
     end
   end
 end

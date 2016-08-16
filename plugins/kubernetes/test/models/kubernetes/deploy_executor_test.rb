@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative "../../test_helper"
 
 SingleCov.covered!
@@ -11,7 +12,8 @@ describe Kubernetes::DeployExecutor do
   let(:project) { job.project }
   let(:build) { builds(:docker_build) }
   let(:deploy_group) { stage.deploy_groups.first }
-  let(:executor) { Kubernetes::DeployExecutor.new(output, job: job) }
+  let(:executor) { Kubernetes::DeployExecutor.new(output, job: job, reference: 'master') }
+  let(:log_url) { "http://foobar.server/api/v1/namespaces/staging/pods/pod-resque-worker/log?container=container1" }
 
   before do
     stage.update_column :kubernetes, true
@@ -26,12 +28,20 @@ describe Kubernetes::DeployExecutor do
 
   describe "#execute!" do
     def execute!
-      stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/pods\?}).to_return(body: pod_reply.to_json) # checks pod status to see if it's good
+      stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/pods\?}).
+        to_return(body: pod_reply.to_json) # checks pod status to see if it's good
       executor.execute!
     end
 
     def stop_after_first_iteration
       executor.expects(:sleep).with { executor.stop!('FAKE-SGINAL'); true }
+    end
+
+    # make the first sleep take a long time so we trigger our timeout condition
+    def timeout_after_first_iteration
+      start = Time.now
+      Time.stubs(:now).returns(start)
+      executor.expects(:sleep).with { Time.stubs(:now).returns(start + 1.hour); true }
     end
 
     def worker_is_unstable
@@ -49,41 +59,92 @@ describe Kubernetes::DeployExecutor do
             },
             metadata: {
               name: "pod-#{role.name}",
+              namespace: 'staging',
               labels: {deploy_group_id: deploy_group.id.to_s, role_id: role.id.to_s}
+            },
+            spec: {
+              containers: [
+                {name: 'container1'}
+              ]
             }
           }
         end
       }
     end
     let(:pod_status) { pod_reply[:items].first[:status] }
+    let(:worker_role) { kubernetes_deploy_group_roles(:test_pod100_resque_worker) }
 
     before do
       job.update_column(:commit, build.git_sha) # this is normally done by JobExecution
       Kubernetes::Role.stubs(:configured_for_project).returns(project.kubernetes_roles)
       kubernetes_fake_raw_template
       Kubernetes::Cluster.any_instance.stubs(connection_valid?: true, namespace_exists?: true)
-      deploy_group.create_cluster_deploy_group! cluster: kubernetes_clusters(:test_cluster), namespace: 'staging', deploy_group: deploy_group
-      stub_request(:get, "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/deployments/").to_return(status: 404) # checks for previous deploys ... but there are none
-      stub_request(:post, "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/deployments").to_return(body: "{}") # creates deployment
+      deploy_group.create_cluster_deploy_group!(
+        cluster: kubernetes_clusters(:test_cluster),
+        namespace: 'staging',
+        deploy_group: deploy_group
+      )
+      stub_request(
+        :get,
+        "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/deployments/test-app-server"
+      ).to_return(status: 404) # checks for previous deploys ... but there are none
+      stub_request(
+        :get,
+        "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/deployments/test-resque-worker"
+      ).to_return(status: 404) # checks for previous deploys ... but there are none
+      stub_request(:post, "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/deployments").
+        to_return(body: "{}") # creates deployment
       executor.stubs(:sleep)
       stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/events}).
         to_return(body: {items: []}.to_json)
-      stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/pods/.*/log})
+      stub_request(:get, /#{Regexp.escape(log_url)}/)
+      Kubernetes::ReleaseDoc.any_instance.stubs(:desired_pod_count).returns(1)
+      GitRepository.any_instance.stubs(:file_content).with('Dockerfile', anything).returns "FROM all"
     end
 
     it "succeeds" do
       assert execute!
-      out.must_include "resque_worker: Live\n"
+      out.must_include "resque-worker: Live\n"
       out.must_include "SUCCESS"
+      out.wont_include "BigDecimal" # properly serialized configs
     end
 
-    it "uses configured roles" do
-      assert execute!
-      doc = Kubernetes::Release.last.release_docs.sort_by(&:replica_target).first
-      config = kubernetes_deploy_group_roles(:test_pod100_app_server)
-      doc.replica_target.must_equal config.replicas
-      doc.cpu.must_equal config.cpu
-      doc.ram.must_equal config.ram
+    it "succeeds without a build" do
+      Build.delete_all
+      refute_difference 'Build.count' do
+        GitRepository.any_instance.expects(:file_content).with('Dockerfile', anything).returns nil
+        assert execute!
+        out.must_include "Not creating a Build"
+        out.must_include "resque-worker: Live\n"
+        out.must_include "SUCCESS"
+      end
+    end
+
+    describe "role settings" do
+      it "uses configured role settings" do
+        assert execute!
+        doc = Kubernetes::Release.last.release_docs.sort_by(&:replica_target).first
+        config = kubernetes_deploy_group_roles(:test_pod100_app_server)
+        doc.replica_target.must_equal config.replicas
+        doc.cpu.must_equal config.cpu
+        doc.ram.must_equal config.ram
+      end
+
+      it "fails when role config is missing" do
+        worker_role.delete
+        e = assert_raises Samson::Hooks::UserError do
+          execute!
+        end
+        e.message.must_equal "No config for role resque-worker and group Pod 100 found, add it on the stage page."
+      end
+
+      it "fails when no role is setup in the project" do
+        Kubernetes::Role.stubs(:configured_for_project).returns([])
+        e = assert_raises Samson::Hooks::UserError do
+          execute!
+        end
+        e.message.must_equal "No kubernetes config files found at sha 1a6f551a2ffa6d88e15eef5461384da0bfb1c194"
+      end
     end
 
     describe "build" do
@@ -169,20 +230,81 @@ describe Kubernetes::DeployExecutor do
       end
     end
 
-    it "fails when role config is missing" do
-      kubernetes_deploy_group_roles(:test_pod100_resque_worker).delete
-      e = assert_raises Samson::Hooks::UserError do
-        execute!
+    describe "running a job before the deploy" do
+      before do
+        # we need multiple different templates here
+        # make the worker a job and keep the app server
+        Kubernetes::ReleaseDoc.any_instance.unstub(:raw_template)
+        GitRepository.any_instance.expects(:file_content).with('kubernetes/resque_worker.yml', anything).returns({
+          'kind' => 'Job',
+          'spec' => {
+            'template' => {
+              'metadata' => {'labels' => {'project' => 'foobar', 'role' => 'migrate'}},
+              'spec' => {
+                'containers' => [{'name' => 'job'}],
+                'restartPolicy' => 'Never'
+              }
+            }
+          },
+          'metadata' => {
+            'name' => 'test',
+            'labels' => {'project' => 'foobar', 'role' => 'migrate'}
+          }
+        }.to_yaml)
+        GitRepository.any_instance.stubs(:file_content).with('kubernetes/app_server.yml', anything).
+          returns(read_kubernetes_sample_file('kubernetes_deployment.yml'))
+
+        # check if the job already exists ... it does not
+        stub_request(:get, "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/jobs/test-resque-worker").
+          to_return(status: 404)
+
+        # create job
+        stub_request(:post, "http://foobar.server/apis/extensions/v1beta1/namespaces/staging/jobs").
+          to_return(body: '{}')
       end
-      e.message.must_equal "No config for role resque_worker and group Pod 100 found, add it on the stage page."
+
+      it "runs only jobs" do
+        kubernetes_roles(:app_server).delete
+        assert execute!
+        out.must_include "resque-worker: Live\n"
+        out.must_include "SUCCESS"
+        out.wont_include "stability"
+        out.wont_include "deploying jobs" # not announcing that we deploy jobs since there is nothing else
+        out.wont_include "other roles" # not announcing that we have more to deploy
+      end
+
+      it "runs jobs and then the deploy" do
+        assert execute!
+        out.must_include "resque-worker: Live\n"
+        out.must_include "SUCCESS"
+        out.must_include "stability" # testing deploy for stability
+        out.must_include "deploying jobs" # announcing that we deploy jobs first
+        out.must_include "other roles" # announcing that we have more to deploy
+      end
+
+      it "fails when jobs fail" do
+        executor.expects(:deploy_to_cluster).returns false # jobs failed, they are the first execution
+        refute execute!
+        out.wont_include "SUCCESS"
+        out.wont_include "stability"
+        out.wont_include "other roles" # not announcing that we have more to deploy
+      end
     end
 
-    it "fails when no role is setup in the project" do
-      Kubernetes::Role.stubs(:configured_for_project).returns([])
+    it "fails when release has errors" do
+      Kubernetes::Release.any_instance.expects(:persisted?).at_least_once.returns(false)
       e = assert_raises Samson::Hooks::UserError do
         execute!
       end
-      e.message.must_equal "No kubernetes config files found at sha 1a6f551a2ffa6d88e15eef5461384da0bfb1c194"
+      e.message.must_equal "Failed to create release: []" # inspected errros
+    end
+
+    it "shows status of each individual pod when there is more than 1 per deploy group" do
+      Kubernetes::ReleaseDoc.any_instance.stubs(:desired_pod_count).returns(1.5)
+      pod_reply[:items] << pod_reply[:items].first
+      assert execute!
+      out.scan(/resque-worker: Live/).count.must_equal 2
+      out.must_include "SUCCESS"
     end
 
     it "stops the loop when stopping" do
@@ -199,7 +321,7 @@ describe Kubernetes::DeployExecutor do
       stop_after_first_iteration
       refute execute!
 
-      out.must_include "resque_worker: Waiting (Pending, not Ready)\n"
+      out.must_include "resque-worker: Waiting (Pending, not Ready)\n"
       out.must_include "STOPPED"
     end
 
@@ -208,47 +330,22 @@ describe Kubernetes::DeployExecutor do
 
       refute execute!
 
-      out.must_include "resque_worker: Restarted\n"
+      out.must_include "resque-worker: Restarted\n"
       out.must_include "UNSTABLE"
     end
 
     it "stops when taking too long to go live" do
       pod_status[:phase] = "Pending"
-
-      # make the first sleep take a long time so we trigger our timeout condition
-      start = Time.now
-      Time.stubs(:now).returns(start)
-      executor.expects(:sleep).with { Time.stubs(:now).returns(start+1.hour) ; true }
-
+      timeout_after_first_iteration
       refute execute!
-
       out.must_include "TIMEOUT"
     end
 
-    it "displays events and logs when deploy failed" do
-      # worker restarted -> we request the previous logs
-      stub_request(:get, "http://foobar.server/api/v1/namespaces/staging/pods/pod-resque_worker/log?previous=true").
-        to_return(body: "LOG-1")
-
-      stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/events}).
-        to_return(body: {items:
-          [
-            {reason: 'FailedScheduling', message: "fit failure on node (ip-1-2-3-4)\nfit failure on node (ip-2-3-4-5)"},
-            {reason: 'FailedScheduling', message: "fit failure on node (ip-2-3-4-5)\nfit failure on node (ip-1-2-3-4)"}
-          ]}.to_json)
-
-      worker_is_unstable
-
+    it "waits when less then exected pods are found" do
+      Kubernetes::ReleaseDoc.any_instance.stubs(:desired_pod_count).returns(2)
+      timeout_after_first_iteration
       refute execute!
-
-      # failed
-      out.must_include "resque_worker: Restarted\n"
-      out.must_include "UNSTABLE"
-
-      # correct debugging output
-      out.scan(/Pod 100 pod pod-(\S+)/).flatten.uniq.must_equal ["resque_worker:"] # logs and events only for bad pod
-      out.must_include "EVENTS:\nFailedScheduling: fit failure on node (ip-1-2-3-4)\nfit failure on node (ip-2-3-4-5)\n\n" # no repeated events
-      out.must_include "LOG-1\n"
+      out.must_include "TIMEOUT"
     end
 
     it "waits when deploy is running but not ready" do
@@ -257,23 +354,15 @@ describe Kubernetes::DeployExecutor do
       stop_after_first_iteration
       refute execute!
 
-      out.must_include "resque_worker: Waiting (Running, not Ready)\n"
+      out.must_include "resque-worker: Waiting (Running, not Ready)\n"
       out.must_include "STOPPED"
-    end
-
-    it "fails when release has errors" do
-      Kubernetes::Release.any_instance.expects(:persisted?).at_least_once.returns(false)
-      e = assert_raises Samson::Hooks::UserError do
-        execute!
-      end
-      e.message.must_equal "Failed to create release: []" # inspected errros
     end
 
     it "fails when pod is failing to boot" do
       pod_status[:containerStatuses][0][:restartCount] = 1
       executor.instance_variable_set(:@testing_for_stability, 0)
       refute execute!
-      out.must_include "resque_worker: Restarted"
+      out.must_include "resque-worker: Restarted"
       out.must_include "UNSTABLE - service is restarting"
     end
 
@@ -284,9 +373,73 @@ describe Kubernetes::DeployExecutor do
       stop_after_first_iteration
       refute execute!
 
-      out.must_include "resque_worker: Missing\n"
+      out.must_include "resque-worker: Missing\n"
       out.must_include "STOPPED"
+    end
+
+    describe "events and logs" do
+      it "displays events and logs when deploy failed" do
+        # worker restarted -> we request the previous logs
+        stub_request(:get, "#{log_url}&previous=true").
+          to_return(body: "LOG-1")
+
+        stub_request(:get, %r{http://foobar.server/api/v1/namespaces/staging/events}).
+          to_return(
+            body: {
+              items: [
+                {
+                  reason: 'FailedScheduling',
+                  message: "fit failure on node (ip-1-2-3-4)\nfit failure on node (ip-2-3-4-5)"
+                },
+                {
+                  reason: 'FailedScheduling',
+                  message: "fit failure on node (ip-2-3-4-5)\nfit failure on node (ip-1-2-3-4)"
+                }
+              ]
+            }.to_json
+          )
+
+        worker_is_unstable
+
+        refute execute!
+
+        # failed
+        out.must_include "resque-worker: Restarted\n"
+        out.must_include "UNSTABLE"
+
+        # correct debugging output
+        out.scan(/Pod 100 pod pod-(\S+)/).flatten.uniq.must_equal ["resque-worker:"] # logs and events only for bad pod
+        out.must_match(
+          /EVENTS:\s+FailedScheduling: fit failure on node \(ip-1-2-3-4\)\s+fit failure on node \(ip-2-3-4-5\)\n\n/
+        ) # no repeated events
+        out.must_match /LOGS:\s+LOG-1/
+      end
+
+      it "requests regular logs when previous logs are not available" do
+        stub_request(:get, "#{log_url}&previous=true").
+          to_raise(KubeException.new('a', 'b', 'c'))
+        stub_request(:get, log_url).
+          to_return(body: "LOG-1")
+
+        worker_is_unstable
+
+        refute execute!
+
+        out.must_match /LOGS:\s+LOG-1/
+      end
+
+      it "does not crash when both log endpoints fails with a 404" do
+        stub_request(:get, "#{log_url}&previous=true").
+          to_raise(KubeException.new('a', 'b', 'c'))
+        stub_request(:get, log_url).
+          to_raise(KubeException.new('a', 'b', 'c'))
+
+        worker_is_unstable
+
+        refute execute!
+
+        out.must_match /LOGS:\s+No logs found/
+      end
     end
   end
 end
-

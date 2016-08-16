@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class ProjectsController < ApplicationController
   include CurrentProject
   include StagePermittedParams
@@ -34,8 +35,8 @@ class ProjectsController < ApplicationController
     @project.current_user = current_user
 
     if @project.save
-      if ENV['PROJECT_CREATED_NOTIFY_ADDRESS']
-        ProjectMailer.created_email(@current_user,@project).deliver_later
+      if Rails.application.config.samson.project_created_email
+        ProjectMailer.created_email(@current_user, @project).deliver_later
       end
       redirect_to @project
       Rails.logger.info("#{@current_user.name_and_email} created a new project #{@project.to_param}")
@@ -45,7 +46,10 @@ class ProjectsController < ApplicationController
   end
 
   def show
-    @stages = project.stages
+    respond_to do |format|
+      format.html { @stages = project.stages }
+      format.json { render json: project.to_json(except: [:token, :deleted_at]) }
+    end
   end
 
   def edit
@@ -62,6 +66,9 @@ class ProjectsController < ApplicationController
   def destroy
     project.soft_delete!
 
+    if Rails.application.config.samson.project_deleted_email
+      ProjectMailer.deleted_email(@current_user, project).deliver_later
+    end
     flash[:notice] = "Project removed."
     redirect_to admin_projects_path
   end

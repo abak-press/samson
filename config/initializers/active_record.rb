@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 # We would like to be able to create an index on a string that is larger than 191 characters
 # We also want our mysql databases to use utf8_mb4 encoding (the real unicode)
 # This monkey patch is from the following Github comment:
@@ -5,10 +6,8 @@
 config = ActiveRecord::Base.configurations[Rails.env]
 
 if ENV['USE_UTF8MB4'] && config['adapter'] == 'mysql2'
-  config.merge!(
-    'encoding' => 'utf8mb4',
-    'collation' => 'utf8mb4_bin'
-  )
+  config['encoding'] = 'utf8mb4'
+  config['collation'] = 'utf8mb4_bin'
 
   module ActiveRecord
     module ConnectionAdapters

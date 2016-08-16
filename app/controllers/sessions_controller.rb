@@ -1,13 +1,12 @@
+# frozen_string_literal: true
 require 'omniauth/github_authorization'
 
 class SessionsController < ApplicationController
   skip_around_action :login_user
-  skip_before_action :verify_authenticity_token, only: [ :ldap ]
+  skip_before_action :verify_authenticity_token, only: [:ldap]
 
   def new
-    if current_user
-      redirect_to root_path
-    end
+    redirect_to root_path if current_user
   end
 
   def github
@@ -21,6 +20,11 @@ class SessionsController < ApplicationController
   end
 
   def ldap
+    return show_login_restriction unless allowed_to_login
+    login(role_id: Role::VIEWER.id)
+  end
+
+  def gitlab
     return show_login_restriction unless allowed_to_login
     login(role_id: Role::VIEWER.id)
   end
@@ -51,7 +55,7 @@ class SessionsController < ApplicationController
     if restricted_email_domain
       return request.env["omniauth.auth"]["info"]["email"].end_with?(restricted_email_domain)
     end
-    return true
+    true
   end
 
   def auth_hash

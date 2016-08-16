@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -27,12 +28,20 @@ describe Admin::SecretsController do
     }
 
     describe '#index' do
+      before { create_global }
+
       it 'renders template without secret values' do
-        create_global
         get :index
         assert_template :index
         assigns[:secret_keys].size.must_equal 1
         response.body.wont_include secret.value
+      end
+
+      it 'can filter' do
+        create_secret 'production/global/pod2/bar'
+        get :index, search: {query: 'bar'}
+        assert_template :index
+        assigns[:secret_keys].must_equal ['production/global/pod2/bar']
       end
     end
 
@@ -52,7 +61,7 @@ describe Admin::SecretsController do
 
     describe '#update' do
       it "is unauthrized" do
-        put :update, id: secret, secret: {project_permalink: SecretStorage.parse_secret_key_part(secret.id, :project) }
+        put :update, id: secret, secret: {value: 'xxx'}
         assert_unauthorized
       end
     end
@@ -67,17 +76,18 @@ describe Admin::SecretsController do
 
   as_a_project_admin do
     describe '#create' do
-      let(:attributes) {{
-        environment_permalink: 'production',
-        project_permalink: 'foo',
-        deploy_group_permalink: 'pod2',
-        key: 'v',
-        value: 'echo hi'
-      }}
-
-      before { post :create, secret: attributes }
+      let(:attributes) do
+        {
+          environment_permalink: 'production',
+          project_permalink: 'foo',
+          deploy_group_permalink: 'pod2',
+          key: 'v',
+          value: 'echo hi'
+        }
+      end
 
       it 'creates a secret' do
+        post :create, secret: attributes
         flash[:notice].wont_be_nil
         assert_redirected_to admin_secrets_path
         secret = SecretStorage::DbBackend::Secret.find('production/foo/pod2/v')
@@ -85,21 +95,23 @@ describe Admin::SecretsController do
         secret.creator_id.must_equal user.id
       end
 
-      describe 'invalid' do
-        let(:attributes) {{ environment_permalink: 'production', project_permalink: 'foo', deploy_group_permalink: 'group', key: '', value: '' }}
-
-        it 'renders and sets the flash' do
-          assert flash[:error]
-          assert_template :edit
-        end
+      it "redirects to new form when user wants to create another secret" do
+        post :create, secret: attributes, commit: Admin::SecretsController::ADD_MORE
+        flash[:notice].wont_be_nil
+        assert_redirected_to "/admin/secrets/new?#{{secret: attributes.except(:value)}.to_query}"
       end
 
-      describe 'global' do
-        let(:attributes) {{ environment_permalink: 'production', project_permalink: 'global', deploy_group_permalink: 'somegroup', key: 'bar' }}
+      it 'renders and sets the flash when invalid' do
+        attributes[:key] = ''
+        post :create, secret: attributes
+        assert flash[:error]
+        assert_template :edit
+      end
 
-        it 'is unauthorized' do
-          assert_unauthorized
-        end
+      it "is not authorized to create global secrets" do
+        attributes[:project_permalink] = 'global'
+        post :create, secret: attributes
+        assert_unauthorized
       end
     end
 
@@ -124,11 +136,7 @@ describe Admin::SecretsController do
     end
 
     describe '#update' do
-      let(:attributes) {{
-        value: 'hi', environment_permalink: SecretStorage.parse_secret_key_part(secret.id, :environment),
-        project_permalink: SecretStorage.parse_secret_key_part(secret.id, :project),
-        deploy_group_permalink: SecretStorage.parse_secret_key_part(secret.id, :deploy_group)
-      }}
+      let(:attributes) { { value: 'hi' } }
 
       before do
         patch :update, id: secret.id, secret: attributes
@@ -143,12 +151,7 @@ describe Admin::SecretsController do
       end
 
       describe 'invalid' do
-        let(:attributes) {{
-          value: '',
-          environment_permalink: SecretStorage.parse_secret_key_part(secret.id, :environment),
-          project_permalink: SecretStorage.parse_secret_key_part(secret.id, :project),
-          deploy_group_permalink: SecretStorage.parse_secret_key_part(secret.id, :deploy_group)
-        }}
+        let(:attributes) { { value: '' } }
 
         it 'fails to update' do
           assert_template :edit
@@ -200,13 +203,15 @@ describe Admin::SecretsController do
   as_a_admin do
     let(:secret) { create_global }
     describe '#create' do
-      let(:attributes) {{
-        environment_permalink: 'production',
-        project_permalink: 'foo',
-        deploy_group_permalink: 'pod2',
-        key: 'v',
-        value: 'echo hi'
-      }}
+      let(:attributes) do
+        {
+          environment_permalink: 'production',
+          project_permalink: 'foo',
+          deploy_group_permalink: 'pod2',
+          key: 'v',
+          value: 'echo hi'
+        }
+      end
 
       before do
         post :create, secret: attributes

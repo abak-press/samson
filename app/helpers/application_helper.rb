@@ -1,8 +1,9 @@
+# frozen_string_literal: true
 require 'ansible'
 require 'github/markdown'
 
 module ApplicationHelper
-  BOOTSTRAP_FLASH_MAPPINGS = { notice: :info, error: :danger, authorization_error: :danger, success: :success }
+  BOOTSTRAP_FLASH_MAPPINGS = { notice: :info, error: :danger, authorization_error: :danger, success: :success }.freeze
 
   include Ansible
   include DateTimeHelper
@@ -49,24 +50,6 @@ module ApplicationHelper
     render '/locks/lock', lock: global_lock if global_lock
   end
 
-  def relative_time(time)
-    content_tag(:span, time.rfc822, data: { time: datetime_to_js_ms(time) }, class: "mouseover")
-  end
-
-  def render_time(time, format)
-    # grab the time format that the user has in their profile
-    format ||= current_user.time_format
-    if format == 'local'
-      local_time = time.in_time_zone(cookies[:timezone] || 'UTC').to_s
-      content_tag(:time, local_time, datetime: local_time)
-    elsif format == 'utc'
-      utc_time = time.in_time_zone('UTC')
-      content_tag(:time, utc_time.to_s, datetime: utc_time)
-    else
-      relative_time(time)
-    end
-  end
-
   def sortable(column, title = nil)
     title ||= column.titleize
     direction = (column == params[:sort] && params[:direction] == "asc") ? "desc" : "asc"
@@ -77,7 +60,7 @@ module ApplicationHelper
     status_url = Rails.application.config.samson.github.status_url
 
     Rails.cache.fetch(github_status_cache_key, expires_in: 5.minutes) do
-      response = Faraday.get("https://#{status_url}/api/status.json") do |req|
+      response = Faraday.get("#{status_url}/api/status.json") do |req|
         req.options.timeout = req.options.open_timeout = 1
       end
 
@@ -134,8 +117,8 @@ module ApplicationHelper
     content_tag :i, '', class: "glyphicon glyphicon-#{type}"
   end
 
-  def link_to_delete(path, body = 'Delete', options={})
-    link_to body, path, options.merge({ method: :delete, data: { confirm: "Are you sure?" } })
+  def link_to_delete(path, body = 'Delete', options = {})
+    link_to body, path, options.merge(method: :delete, data: { confirm: "Are you sure?" })
   end
 
   def link_to_delete_button(path)
@@ -165,5 +148,32 @@ module ApplicationHelper
 
   def environments
     @environments ||= Environment.all
+  end
+
+  def render_nested_errors(object, seen = Set.new)
+    return "" if seen.include?(object)
+    seen << object
+    return "" if object.errors.empty?
+
+    content_tag :ul do
+      lis = object.errors.map do |attribute, message|
+        content_tag(:li) do
+          content = "".html_safe
+          content << object.errors.full_message(attribute, message)
+          values = (object.respond_to?(attribute) ? Array.wrap(object.send(attribute)) : [])
+          if values.first.is_a?(ActiveRecord::Base)
+            values.each do |value|
+              content << render_nested_errors(value, seen)
+            end
+          end
+          content
+        end
+      end
+      safe_join lis
+    end
+  end
+
+  def link_to_history(resource)
+    link_to "History (#{resource.versions.count})", versions_path(item_id: resource.id, item_type: resource.class.name)
   end
 end

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: 6 unless defined?(Rake) # rake preloads all plugins
@@ -6,7 +7,7 @@ describe SamsonPipelines do
   let(:deploy) { deploys(:succeeded_test) }
   let(:next_deploy) { deploys(:succeeded_production_test) }
   let(:stage) { deploy.stage }
-  let(:next_stages) { [ stages(:test_production), stages(:test_production_pod) ] }
+  let(:next_stages) { [stages(:test_production), stages(:test_production_pod)] }
   let(:output) { StringIO.new }
   let(:job) do
     Job.create(
@@ -14,7 +15,8 @@ describe SamsonPipelines do
       command: "echo hello world",
       status: "running",
       user: User.first,
-      deploy: deploy)
+      deploy: deploy
+    )
   end
 
   describe :after_job_execution do

@@ -1,8 +1,9 @@
+# frozen_string_literal: true
 require 'flowdock'
 
 class FlowdockNotification
   delegate :project, :stage, :user, to: :@deploy
-  delegate :project_deploy_url, to: 'AppRoutes.url_helpers'
+  delegate :project_deploy_url, to: 'Rails.application.routes.url_helpers'
 
   def initialize(deploy)
     @deploy = deploy
@@ -14,7 +15,7 @@ class FlowdockNotification
 
   def buddy_request_completed(buddy, approved = true)
     buddy_request_content = buddy_request_completed_message(approved, buddy)
-    flowdock_service.notify_chat(buddy_request_content, %w(buddy-request completed))
+    flowdock_service.notify_chat(buddy_request_content, %w[buddy-request completed])
   end
 
   def deliver
@@ -25,14 +26,21 @@ class FlowdockNotification
     Airbrake.notify(error, error_message: 'Could not deliver flowdock message')
   end
 
+  def default_buddy_request_message
+    project = @deploy.project
+    ":pray: @team #{@deploy.user.name} is requesting approval" \
+      " to deploy #{project.name} **#{@deploy.reference}** to production."\
+      " [Review this deploy](#{project_deploy_url(project, @deploy)})."
+  end
+
   private
 
   def buddy_request_completed_message(approved, buddy)
     if user == buddy
-       "#{user.name} bypassed deploy #{deploy_url}"
-     else
-       "#{user.name} #{buddy.name} #{approved ? 'approved' : 'stopped' } deploy #{deploy_url}"
-     end
+      "#{user.name} bypassed deploy #{deploy_url}"
+    else
+      "#{user.name} #{buddy.name} #{approved ? 'approved' : 'stopped'} deploy #{deploy_url}"
+    end
   end
 
   def content

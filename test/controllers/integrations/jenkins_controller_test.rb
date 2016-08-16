@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -22,7 +23,10 @@ describe Integrations::JenkinsController do
 
   before { Deploy.delete_all }
 
-  test_regular_commit "Jenkins", no_mapping: {build: { scm: { branch: "foobar" }}}, failed: {build: { status: "FAILURE" }} do
+  options = {
+    no_mapping: {build: { scm: { branch: "foobar" }}}, failed: {build: { status: "FAILURE" }}
+  }
+  test_regular_commit "Jenkins", options do
     project.webhooks.create!(stage: stages(:test_staging), branch: "origin/dev", source: 'jenkins')
   end
 end

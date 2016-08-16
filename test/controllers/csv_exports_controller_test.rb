@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -12,9 +13,9 @@ describe CsvExportsController do
         it "renders the full admin menu and new page" do
           get :new
           @response.body.must_include "Environment variables"
-          @response.body.must_include "Download Users CSV Report"
+          @response.body.must_include "Users Report"
           @response.body.must_include "Reports"
-          @response.body.must_include "Create Deploys CSV Report"
+          @response.body.must_include "Deploys CSV Report"
         end
       end
     end
@@ -24,9 +25,9 @@ describe CsvExportsController do
         it "renders the limited admin menu and limited new page" do
           get :new
           @response.body.wont_include "Environment variables"
-          @response.body.wont_include "Download Users CSV Report"
+          @response.body.must_include "Users Report"
           @response.body.must_include "Reports"
-          @response.body.must_include "Create Deploys CSV Report"
+          @response.body.must_include "Deploys CSV Report"
         end
       end
     end
@@ -76,16 +77,89 @@ describe CsvExportsController do
     end
 
     describe "#new" do
-      before do
-        p = projects(:test).dup
-        p.name = "Other"
-        p.save!(validate: false)
+      describe "as html" do
+        before do
+          # clone a project to test it appears in the UI
+          p = projects(:test).dup
+          p.name = "Other Project"
+          p.save!(validate: false)
+        end
+
+        describe "empty type (Deploys)" do
+          it "renders deploy form with deleted_projects" do
+            Project.last.update_attribute(:deleted_at, DateTime.now)
+            get :new
+            assert_select "h1", "Request Deploys Report"
+            @response.body.must_include ">Project</option>"
+            @response.body.must_include ">(deleted) Other Project</option>"
+          end
+        end
+
+        describe "users type" do
+          it "renders form options" do
+            get :new, type: :users
+            assert_select "h1", "User Permission Reports"
+            @response.body.must_include ">Project</option>"
+            @response.body.must_include ">Other Project</option>"
+            @response.body.must_include ">Viewer</option>"
+            @response.body.must_include ">Super Admin</option>"
+          end
+        end
       end
 
-      it "renders form options" do
-        get :new
-        @response.body.must_include ">Other</option>"
-        @response.body.must_include ">Project</option>"
+      describe "as csv" do
+        describe "no type" do
+          it "responds with not found" do
+            get :new, format: :csv
+            response.body.must_equal "not found"
+          end
+        end
+
+        describe "users type" do
+          before { users(:super_admin).soft_delete! }
+          let(:expected) do
+            { inherited: false, deleted: false, project_id: nil, user_id: nil }
+          end
+
+          it "returns csv with default options" do
+            csv_test({}, expected)
+          end
+
+          it "returns csv with inherited option" do
+            expected[:inherited] = true
+            csv_test({inherited: "true"}, expected)
+          end
+
+          it "returns csv with specific project option" do
+            expected[:inherited] = true
+            expected[:project_id] = Project.first.id
+            csv_test({project_id: Project.first.id}, expected)
+          end
+
+          it "returns csv with deleted option" do
+            expected[:deleted] = true
+            csv_test({deleted: "true"}, expected)
+          end
+
+          it "returns csv with specific user option and user is deleted" do
+            expected[:inherited] = true
+            expected[:user_id] = users(:super_admin).id
+            csv_test({user_id: users(:super_admin).id}, expected)
+          end
+
+          it "returns csv with multiple options" do
+            expected[:inherited] = true
+            expected[:deleted] = true
+            csv_test({inherited: "true", deleted: "true"}, expected)
+          end
+
+          def csv_test(options, expected)
+            options = options.merge(format: :csv, type: "users")
+            get :new, options
+            response.success?.must_equal true
+            CSV.parse(response.body).pop.pop.must_equal expected.to_json
+          end
+        end
       end
     end
 
@@ -131,7 +205,7 @@ describe CsvExportsController do
             end
           end
 
-          if [:finished, :downloaded].include?(state)  # Only run these tests if ready
+          if [:finished, :downloaded].include?(state) # Only run these tests if ready
             describe "as csv with file" do
               before do
                 CsvExportJob.perform_now(export)
@@ -198,8 +272,10 @@ describe CsvExportsController do
       end
 
       it "with valid filters creates a new csv_export, with correct filters and redirect to status" do
-        filter = { start_date: "2010-01-01", end_date: "2015-12-31", production:"Yes", status: "succeeded",
-          project: projects(:test).id.to_s}
+        filter = {
+          start_date: "2010-01-01", end_date: "2015-12-31", production: "Yes", status: "succeeded",
+          project: projects(:test).id.to_s
+        }
         assert_difference 'CsvExport.count' do
           post :create, filter
         end
@@ -209,20 +285,27 @@ describe CsvExportsController do
         csv_filter.keys.must_include "stages.production"
         csv_filter.keys.must_include "jobs.status"
         csv_filter.keys.must_include "stages.project_id"
-        start_date = Date.parse(filter[:start_date])
-        end_date = Date.parse(filter[:end_date])
-        csv_filter["deploys.created_at"].must_equal (start_date..end_date)
+        start_date = DateTime.parse(filter[:start_date])
+        end_date = DateTime.parse(filter[:end_date] + "T23:59:59Z")
+        csv_filter["deploys.created_at"].must_equal start_date..end_date
         csv_filter["stages.production"].must_equal true
         csv_filter["jobs.status"].must_equal "succeeded"
         csv_filter["stages.project_id"].must_equal projects(:test).id
       end
 
-      it "with production No filter creates a correct filter" do
-        filter = { production: "No"}
-        post :create, filter
-        csv_filter = CsvExport.last.filters
-        csv_filter["stages.production"].must_equal false
+      def self.it_filters_production(prod, groups)
+        it "with production filter #{prod == "Yes"} and DeployGroup enabled #{groups} creates correct filter" do
+          DeployGroup.stubs(:enabled?).returns(groups)
+          post :create, production: prod
+          csv_filter = CsvExport.last.filters
+          csv_filter[groups ? "environments.production" : "stages.production"].must_equal prod == "Yes"
+        end
       end
+
+      it_filters_production "Yes", true
+      it_filters_production "Yes", false
+      it_filters_production "No", true
+      it_filters_production "No", false
 
       it "with production blank filter does not have stages.production filter" do
         filter = { production: ""}
@@ -232,11 +315,11 @@ describe CsvExportsController do
       end
 
       it "raises for invalid params" do
-        create_fail_test(ArgumentError, {start_date: '2000-13-13'})
-        create_fail_test(ArgumentError, {end_date: '2015-13-31'})
-        create_fail_test("Invalid production filter foo", {production: 'foo'})
-        create_fail_test("Invalid status filter foo", {status: 'foo'})
-        create_fail_test("Invalid project id foo", {project: "foo"})
+        create_fail_test(ArgumentError, start_date: '2000-13-13')
+        create_fail_test(ArgumentError, end_date: '2015-13-31')
+        create_fail_test("Invalid production filter foo", production: 'foo')
+        create_fail_test("Invalid status filter foo", status: 'foo')
+        create_fail_test("Invalid project id foo", project: "foo")
       end
     end
   end

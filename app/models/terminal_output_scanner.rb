@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 # Scans a stream of characters, yielding a stream of tokens.
 #
 # The scanner understands some terminal escape codes - in particular, it pays
@@ -6,7 +7,8 @@
 # current line, and the next data will overwrite that line.
 class TerminalOutputScanner
   def initialize(source)
-    @source, @queue = source, []
+    @source = source
+    @queue = []
     reset_buffer!
   end
 
@@ -34,34 +36,33 @@ class TerminalOutputScanner
   end
 
   def write_part(part)
-    if part.start_with?("\r") || part.start_with?("\n")
+    if part.start_with?("\r", "\n")
       flush_buffer!
 
       part.sub!(/^\r/, "") # chop off the leading \r
 
-      if part.start_with?("\n")
-        @state = :append
-      else
-        @state = :replace
-      end
+      @state =
+        if part.start_with?("\n")
+          :append
+        else
+          :replace
+        end
     end
 
     @buffer << part
 
-    if @buffer.end_with?("\n")
-      flush_buffer!
-    end
+    flush_buffer! if @buffer.end_with?("\n")
   end
 
   def flush_buffer!
-    if !@buffer.empty?
+    unless @buffer.empty?
       output(@state, @buffer)
       reset_buffer!
     end
   end
 
   def reset_buffer!
-    @buffer = ""
+    @buffer = "".dup
     @state = :append
   end
 

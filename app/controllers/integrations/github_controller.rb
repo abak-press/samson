@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class Integrations::GithubController < Integrations::BaseController
   cattr_accessor(:github_hook_secret) { ENV['GITHUB_HOOK_SECRET'] }
 
@@ -6,12 +7,19 @@ class Integrations::GithubController < Integrations::BaseController
     'push' => Changeset::CodePush,
     'pull_request' => Changeset::PullRequest,
     'issue_comment' => Changeset::IssueComment
-  }
+  }.freeze
 
   protected
 
+  def validate_request
+    unless valid_signature?
+      record_log :warn, "Github webhook: failed to validate signature '#{signature}'"
+      head(:unauthorized, message: 'Invalid signature')
+    end
+  end
+
   def deploy?
-    valid_signature? && valid_payload?
+    webhook_handler && webhook_handler.valid_webhook?(params)
   end
 
   def valid_signature?
@@ -21,11 +29,7 @@ class Integrations::GithubController < Integrations::BaseController
       request.body.tap(&:rewind).read
     )
 
-    Rack::Utils.secure_compare(request.headers['X-Hub-Signature'].to_s, "sha1=#{hmac}")
-  end
-
-  def valid_payload?
-    webhook_handler && webhook_handler.valid_webhook?(params)
+    Rack::Utils.secure_compare(signature, "sha1=#{hmac}")
   end
 
   def commit
@@ -48,5 +52,9 @@ class Integrations::GithubController < Integrations::BaseController
 
   def webhook_handler
     WEBHOOK_HANDLERS[request.headers['X-Github-Event']]
+  end
+
+  def signature
+    request.headers['X-Hub-Signature'].to_s
   end
 end

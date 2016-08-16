@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -5,19 +6,19 @@ SingleCov.covered!
 describe Kubernetes::RolesController do
   let(:project) { role.project }
   let(:role) { kubernetes_roles(:app_server) }
-  let(:role_params) { {
-    name: 'NAME',
-    service_name: 'SERVICE_NAME',
-    config_file: 'dsfsd.yml',
-    cpu: 1,
-    ram: 1,
-    replicas: 1,
-    deploy_strategy: 'RollingUpdate'
-  } }
+  let(:role_params) do
+    {
+      name: 'name',
+      service_name: 'service-name',
+      config_file: 'dsfsd.yml',
+      resource_name: 'name-app-server'
+    }
+  end
 
   as_a_viewer do
     unauthorized :get, :index, project_id: :foo
     unauthorized :post, :seed, project_id: :foo
+    unauthorized :get, :example, project_id: :foo
     unauthorized :get, :new, project_id: :foo
     unauthorized :post, :create, project_id: :foo
     unauthorized :get, :show, project_id: :foo, id: 1
@@ -50,6 +51,17 @@ describe Kubernetes::RolesController do
         assert_template :show
       end
     end
+
+    describe "#example" do
+      it "renders" do
+        get :example, project_id: project
+        assert_template :example
+
+        # verify that the template is valid
+        template = response.body[/<pre>(.*)<\/pre>/m, 1]
+        Kubernetes::RoleConfigFile.new(template, 'app-server.yml')
+      end
+    end
   end
 
   as_a_project_admin do
@@ -58,6 +70,14 @@ describe Kubernetes::RolesController do
         Kubernetes::Role.expects(:seed!)
         post :seed, project_id: project, ref: 'HEAD'
         assert_redirected_to action: :index
+        refute flash[:error]
+      end
+
+      it "shows errors when role creation fails due to an invalid template" do
+        Kubernetes::Role.expects(:seed!).raises(Samson::Hooks::UserError.new("Heyho"))
+        post :seed, project_id: project, ref: 'HEAD'
+        assert_redirected_to action: :index
+        flash[:error].must_include "Heyho"
       end
     end
 
@@ -72,8 +92,8 @@ describe Kubernetes::RolesController do
       it "creates" do
         post :create, project_id: project, kubernetes_role: role_params
         role = Kubernetes::Role.last
-        assert_redirected_to [project, role]
-        role.name.must_equal 'NAME'
+        assert_redirected_to "/projects/foo/kubernetes/roles"
+        role.name.must_equal 'name'
       end
 
       it "renders on failure" do
@@ -84,10 +104,10 @@ describe Kubernetes::RolesController do
     end
 
     describe "#update" do
-      it "creates" do
+      it "updates" do
         put :update, project_id: project, id: role.id, kubernetes_role: role_params
-        assert_redirected_to [project, role]
-        role.reload.name.must_equal 'NAME'
+        assert_redirected_to "/projects/foo/kubernetes/roles"
+        role.reload.name.must_equal 'name'
       end
 
       it "renders on failure" do

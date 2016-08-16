@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module SamsonNewRelic
   module Api
     KEY = ENV['NEWRELIC_API_KEY'].presence
@@ -19,7 +20,7 @@ module SamsonNewRelic
         end
       end
 
-      def get(path, params={})
+      def get(path, params = {})
         response = Faraday.get("https://api.newrelic.com#{path}", params) do |request|
           request.options.open_timeout = 2
           request.headers['X-Api-Key'] = KEY
@@ -55,10 +56,9 @@ module SamsonNewRelic
       end
 
       def application_map(application_names)
-        application_names.inject({}) do |map, app_name|
+        application_names.each_with_object({}) do |app_name, map|
           app = applications[app_name]
           map[app_name] = (yield app).merge(id: app.id)
-          map
         end
       end
 

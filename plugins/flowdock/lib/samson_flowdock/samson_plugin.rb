@@ -1,13 +1,16 @@
+# frozen_string_literal: true
 module SamsonFlowdock
   class Engine < Rails::Engine
   end
 end
 
 Samson::Hooks.view :stage_form, "samson_flowdock/fields"
-Samson::Hooks.view :deploy_view, 'samson_flowdock/notify_buddy_box'
+Samson::Hooks.view :deploy_view, "samson_flowdock/notify_buddy_box"
 
 Samson::Hooks.callback :stage_clone do |old_stage, new_stage|
-  new_stage.flowdock_flows.build(old_stage.flowdock_flows.map { |f| f.attributes.except("id", "created_at", "updated_at") })
+  new_stage.flowdock_flows.build(
+    old_stage.flowdock_flows.map { |f| f.attributes.except("id", "created_at", "updated_at") }
+  )
 end
 
 Samson::Hooks.callback :stage_permitted_params do

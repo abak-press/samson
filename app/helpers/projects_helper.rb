@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module ProjectsHelper
   def star_for_project(project)
     content_tag :span, class: 'star' do
@@ -42,5 +43,15 @@ module ProjectsHelper
 
   def deployer_for_project?
     current_user.deployer_for?(@project)
+  end
+
+  def repository_web_link(project)
+    if project.github?
+      render partial: 'shared/github_link', locals: { project: project }
+    elsif project.gitlab?
+      render partial: 'shared/gitlab_link', locals: { project: project }
+    else
+      ""
+    end
   end
 end

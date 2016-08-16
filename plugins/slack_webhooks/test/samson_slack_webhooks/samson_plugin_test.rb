@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
-SingleCov.covered! uncovered: 1 unless defined?(Rake) # rake preloads all plugins
+SingleCov.covered! unless defined?(Rake) # rake preloads all plugins
 
 describe SamsonSlackWebhooks do
   let(:deploy) { deploys(:succeeded_test) }
@@ -37,7 +38,25 @@ describe SamsonSlackWebhooks do
       stage.slack_webhooks << SlackWebhook.new(webhook_url: 'http://example.com')
       new_stage = Stage.new
       Samson::Hooks.fire(:stage_clone, stage, new_stage)
-      new_stage.slack_webhooks.map(&:attributes).must_equal [{"id"=>nil, "webhook_url"=>"http://example.com", "channel"=>nil, "stage_id"=>nil, "created_at"=>nil, "updated_at"=>nil}]
+      new_stage.slack_webhooks.map(&:attributes).must_equal [{
+        "id" => nil,
+        "webhook_url" => "http://example.com",
+        "channel" => nil,
+        "stage_id" => nil,
+        "created_at" => nil,
+        "updated_at" => nil,
+        "before_deploy" => false,
+        "after_deploy" => true,
+        "for_buddy" => false
+      }]
+    end
+  end
+
+  describe :stage_permitted_params do
+    it "includes our params" do
+      Samson::Hooks.fire(:stage_permitted_params).must_include(
+        slack_webhooks_attributes: [:id, :webhook_url, :channel, :before_deploy, :after_deploy, :for_buddy, :_destroy]
+      )
     end
   end
 end

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'soft_deletion'
 require 'digest/md5'
 
@@ -8,6 +9,8 @@ class User < ActiveRecord::Base
   TIME_FORMATS = ['local', 'utc', 'relative'].freeze
 
   has_soft_deletion default_scope: true
+
+  has_paper_trail skip: [:updated_at, :created_at, :token]
 
   has_many :commands
   has_many :stars
@@ -27,7 +30,7 @@ class User < ActiveRecord::Base
     where("name LIKE ? OR email LIKE ?", "%#{query}%", "%#{query}%")
   }
   scope :with_role, -> (role_id, project_id) {
-    joins("LEFT OUTER JOIN user_project_roles ON users.id = user_project_roles.user_id AND user_project_roles.project_id = #{project_id.to_i}").
+    joins("LEFT OUTER JOIN user_project_roles ON users.id = user_project_roles.user_id AND user_project_roles.project_id = #{project_id.to_i}"). # rubocop:disable Metrics/LineLength
       where('users.role_id >= ? OR user_project_roles.role_id >= ?', role_id, role_id)
   }
 
@@ -49,20 +52,6 @@ class User < ActiveRecord::Base
       scope = scope.where(id: allowed)
     end
     scope
-  end
-
-  def self.to_csv
-    @users = User.order(:id)
-    CSV.generate do |csv|
-      csv << ["id","name","email","projectiD","project","role", User.count.to_s + " Users",
-        (User.count + UserProjectRole.joins(:user, :project).count).to_s + " Total entries" ]
-      @users.find_each do |user|
-        csv << [user.id, user.name, user.email, "", "SYSTEM", user.role.name]
-        UserProjectRole.where(user_id: user.id).joins(:project).find_each do |user_project_role|
-            csv << [user.id, user.name, user.email, user_project_role.project_id, user_project_role.project.name, user_project_role.role.name]
-        end
-      end
-    end
   end
 
   def self.create_or_update_from_hash(hash)
@@ -113,7 +102,17 @@ class User < ActiveRecord::Base
     user_project_roles.find_by(project: project)
   end
 
+  def record_project_role_change
+    record_update true
+  end
+
   private
+
+  # overwrites papertrail to record script
+  def object_attrs_for_paper_trail(attributes)
+    roles = user_project_roles.map { |upr| [upr.project.permalink, upr.role_id] }.to_h
+    super(attributes.merge('project_roles' => roles))
+  end
 
   def set_token
     self.token = SecureRandom.hex

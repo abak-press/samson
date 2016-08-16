@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: 1 unless defined?(Rake) # rake preloads all plugins
@@ -13,7 +14,7 @@ describe SamsonEnv do
       Samson::Hooks.fire(:after_deploy_setup, Dir.pwd, job, StringIO.new, 'abc')
     end
 
-    around { |test| Dir.mktmpdir { |dir| Dir.chdir(dir) { test.call } } }
+    run_inside_of_temp_directory
 
     before do
       project.environment_variables.create!(name: "HELLO", value: "world")
@@ -103,7 +104,7 @@ describe SamsonEnv do
             "2" => {name: "MORE", value: "A"}, # overwritten by specific setting
             "3" => {name: "MORE", value: "B", scope: deploy_groups(:pod100)},
             "4" => {name: "MORE", value: "C", scope: deploy_groups(:pod1)},
-            "5" => {name: "OPTIONAL", value: "A"},
+            "5" => {name: "OPTIONAL", value: "A"}
           },
           name: "G1"
         )

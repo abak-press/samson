@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -18,7 +19,8 @@ describe MultiLock do
     end
 
     it "locks" do
-      MultiLock.lock(1, "a", timeout: 1, failed_to_lock: lambda{ |owner| calls << owner  }) { calls << 1 }.must_equal true
+      result = MultiLock.lock(1, "a", timeout: 1, failed_to_lock: lambda { |owner| calls << owner }) { calls << 1 }
+      result.must_equal true
       assert_equal [1], calls
     end
 
@@ -26,7 +28,8 @@ describe MultiLock do
       MultiLock.send(:try_lock, 1, "a")
 
       assert_time :>, 1 do
-        MultiLock.lock(1, "a", timeout: 1, failed_to_lock: lambda{ |owner| calls << owner  }) { calls << 1 }.must_equal false
+        result = MultiLock.lock(1, "a", timeout: 1, failed_to_lock: lambda { |owner| calls << owner }) { calls << 1 }
+        result.must_equal false
       end
       assert_equal ["a"], calls
     end

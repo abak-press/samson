@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class ReferencesService
   cattr_accessor(:lock_timeout, instance_writer: false) { 2.minutes }
 
@@ -28,7 +29,7 @@ class ReferencesService
   def references_from_cached_repo
     git_references = nil
     lock_project do
-      return unless repository.update_local_cache! # TODO test this ...
+      return unless repository.update_local_cache! # TODO: test this ...
       tags = repository.tags
       git_references = repository.branches.push(*tags).sort_by { |ref| [-ref.length, ref] }.reverse
     end

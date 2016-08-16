@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -11,7 +12,7 @@ describe 'Unauthorized' do
 
   describe '#respond' do
     describe 'as html' do
-      let(:headers) {{}}
+      let(:headers) { {} }
 
       before do
         get '/', {}, headers
@@ -23,16 +24,16 @@ describe 'Unauthorized' do
       end
 
       describe 'without a referer' do
-        it 'redirects to the root path' do
+        it 'redirects to the login path' do
           last_response.must_be(:redirect?)
 
           # Really just '/', but Rack insists on using the full SERVER_NAME
-          last_response.headers['Location'].must_equal('http://example.org/')
+          last_response.headers['Location'].must_equal('http://example.org/login')
         end
       end
 
       describe 'with a referer' do
-        let(:headers) {{ 'HTTP_REFERER' => 'hello' }}
+        let(:headers) { { 'HTTP_REFERER' => 'hello' } }
 
         it 'redirects to the referer' do
           last_response.must_be(:redirect?)

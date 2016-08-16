@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -10,12 +11,14 @@ describe StagesController do
   unauthorized :get, :index, project_id: :foo, token: Rails.application.config.samson.badge_token, format: :svg
 
   describe 'GET to :show with svg' do
-    let(:valid_params) {{
-      project_id: subject.project.to_param,
-      id: subject.to_param,
-      format: :svg,
-      token: Rails.application.config.samson.badge_token
-    }}
+    let(:valid_params) do
+      {
+        project_id: subject.project.to_param,
+        id: subject.to_param,
+        format: :svg,
+        token: Rails.application.config.samson.badge_token
+      }
+    end
     let(:job) { jobs(:succeeded_test) }
     let(:deploy) { deploys(:succeeded_test) }
 
@@ -61,12 +64,6 @@ describe StagesController do
         get :index, project_id: project
         assert_template 'index'
       end
-
-      it "renders json" do
-        get :index, project_id: project, format: 'json'
-        response.body.must_match /\A\{\"stages\":\[/m
-        assert_response :success
-      end
     end
 
     describe 'GET to :show' do
@@ -82,12 +79,14 @@ describe StagesController do
 
         it 'displays a sanitized dashboard' do
           subject.update_attribute :dashboard,
-                                   'START_OF_TEXT<p>PARAGRAPH_TEXT</p><img src="foo.jpg"/><iframe src="http://localhost/foo.txt"></iframe><script>alert("hi there");</script>END_OF_TEXT'
+            'START_OF_TEXT<p>PARAGRAPH_TEXT</p><img src="foo.jpg"/>' \
+            '<iframe src="http://localhost/foo.txt"></iframe><script>alert("hi there");</script>END_OF_TEXT'
 
           get :show, project_id: subject.project.to_param, id: subject.to_param
 
           response.body.to_s[/START_OF_TEXT.*END_OF_TEXT/].must_equal(
-              'START_OF_TEXT<p>PARAGRAPH_TEXT</p><img src="foo.jpg"><iframe src="http://localhost/foo.txt"></iframe>alert("hi there");END_OF_TEXT'
+            'START_OF_TEXT<p>PARAGRAPH_TEXT</p><img src="foo.jpg">' \
+            '<iframe src="http://localhost/foo.txt"></iframe>alert("hi there");END_OF_TEXT'
           )
         end
       end
@@ -142,15 +141,13 @@ describe StagesController do
         subject { assigns(:stage) }
 
         before do
-          new_command = Command.create!(
-              command: 'test2 command'
-          )
+          new_command = Command.create!(command: 'test2 command')
 
           post :create, project_id: project.to_param, stage: {
-                          name: 'test',
-                          command: 'test command',
-                          command_ids: [commands(:echo).id, new_command.id]
-                      }
+            name: 'test',
+            command: 'test command',
+            command_ids: [commands(:echo).id, new_command.id]
+          }
 
           subject.reload
           subject.commands.reload
@@ -169,9 +166,7 @@ describe StagesController do
 
       describe 'invalid attributes' do
         before do
-          post :create, project_id: project.to_param, stage: {
-                          name: nil
-                      }
+          post :create, project_id: project.to_param, stage: {name: nil}
         end
 
         it 'renders' do
@@ -220,20 +215,21 @@ describe StagesController do
     describe 'PATCH to #update' do
       describe 'valid id' do
         before do
-          patch :update, project_id: subject.project.to_param, id: subject.to_param,
-                stage: attributes
+          patch :update, project_id: subject.project.to_param, id: subject.to_param, stage: attributes
 
           subject.reload
         end
 
         describe 'valid attributes' do
-          let(:attributes) {{
+          let(:attributes) do
+            {
               command: 'test command',
               name: 'Hello',
               dashboard: '<p>Some text</p>',
               email_committers_on_automated_deploy_failure: true,
-              static_emails_on_automated_deploy_failure: "static@example.com",
-          }}
+              static_emails_on_automated_deploy_failure: "static@example.com"
+            }
+          end
 
           it 'updates attributes' do
             subject.name.must_equal('Hello')
@@ -253,7 +249,7 @@ describe StagesController do
         end
 
         describe 'invalid attributes' do
-          let(:attributes) {{ name: nil }}
+          let(:attributes) { { name: nil } }
 
           it 'renders' do
             assert_template :edit

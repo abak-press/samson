@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! unless defined?(Rake) # rake preloads all plugins
@@ -5,7 +6,10 @@ SingleCov.covered! unless defined?(Rake) # rake preloads all plugins
 describe SamsonNewRelic do
   describe :stage_permitted_params do
     it "lists extra keys" do
-      assert Samson::Hooks.fire(:stage_permitted_params).detect { |x| x.is_a?(Hash) && x[:new_relic_applications_attributes] }
+      found = Samson::Hooks.fire(:stage_permitted_params).detect do |x|
+        x.is_a?(Hash) && x[:new_relic_applications_attributes]
+      end
+      assert found
     end
   end
 

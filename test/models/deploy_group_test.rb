@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: 3
@@ -93,7 +94,8 @@ describe DeployGroup do
     end
 
     it 'can set env_value' do
-      DeployGroup.create!(name: 'Pod666 - the best', env_value: 'pod:666', environment: environment).env_value.must_equal 'pod:666'
+      DeployGroup.create!(name: 'Pod666 - the best', env_value: 'pod:666', environment: environment).env_value.
+        must_equal 'pod:666'
     end
   end
 
@@ -107,7 +109,7 @@ describe DeployGroup do
     end
 
     it "sorts pure numbers" do
-      sort(['11', '1', '22', '12', '9']).must_equal ['1', '9','11', '12', '22']
+      sort(['11', '1', '22', '12', '9']).must_equal ['1', '9', '11', '12', '22']
     end
 
     it "sorts pure words" do
@@ -118,4 +120,14 @@ describe DeployGroup do
   it_expires_stage :save
   it_expires_stage :destroy
   it_expires_stage :soft_delete
+
+  describe "#destroy_deploy_groups_stages" do
+    let(:deploy_group) { deploy_groups(:pod100) }
+
+    it 'deletes deploy_groups_stages on destroy' do
+      assert_difference 'DeployGroupsStage.count', -1 do
+        deploy_group.destroy!
+      end
+    end
+  end
 end

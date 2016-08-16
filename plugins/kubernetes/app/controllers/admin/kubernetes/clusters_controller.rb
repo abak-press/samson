@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 class Admin::Kubernetes::ClustersController < ApplicationController
   before_action :authorize_admin!
-  before_action :authorize_super_admin!, only: [ :create, :new, :update, :edit ]
+  before_action :authorize_super_admin!, only: [:create, :new, :update, :edit]
 
   before_action :find_cluster, only: [:show, :edit, :update]
   before_action :load_default_config_file, only: [:new, :edit, :update, :create]
@@ -12,7 +13,6 @@ class Admin::Kubernetes::ClustersController < ApplicationController
   def create
     @cluster = ::Kubernetes::Cluster.new(new_cluster_params)
     success = @cluster.save
-    @cluster.watch! if success
 
     respond_to do |format|
       format.html do
@@ -42,7 +42,6 @@ class Admin::Kubernetes::ClustersController < ApplicationController
   def update
     @cluster.assign_attributes(new_cluster_params)
     success = @cluster.save
-    @cluster.watch! if success
 
     respond_to do |format|
       format.html do
@@ -66,14 +65,18 @@ class Admin::Kubernetes::ClustersController < ApplicationController
   end
 
   def new_cluster_params
-    params.require(:kubernetes_cluster).permit(:name, :config_filepath, :config_context, :description, { deploy_group_ids: [] })
+    params.require(:kubernetes_cluster).permit(
+      :name, :config_filepath, :config_context, :description, deploy_group_ids: []
+    )
   end
 
   def load_default_config_file
-    if (file = ENV['KUBE_CONFIG_FILE'])
-      @config_file = file
-    elsif (last_cluster = ::Kubernetes::Cluster.last)
-      @config_file = last_cluster.config_filepath
+    @config_file = if @cluster
+      @cluster.config_filepath
+    elsif file = ENV['KUBE_CONFIG_FILE']
+      File.expand_path(file)
+    elsif last_cluster = ::Kubernetes::Cluster.last
+      last_cluster.config_filepath
     end
 
     @context_options = Kubeclient::Config.read(@config_file).contexts if @config_file

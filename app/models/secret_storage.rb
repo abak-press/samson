@@ -1,6 +1,11 @@
+# frozen_string_literal: true
 module SecretStorage
+  SECRET_KEYS_PARTS = [:environment_permalink, :project_permalink, :deploy_group_permalink, :key].freeze
+  SEPARATOR = "/"
+  VAULT_SECRET_BACKEND = 'secret/'
+  SAMSON_SECRET_NAMESPACE = 'apps/'
+
   require 'attr_encrypted'
-  SECRET_KEYS_PARTS = [:environment, :project, :deploy_group, :key].freeze
   class DbBackend
     class Secret < ActiveRecord::Base
       self.table_name = :secrets
@@ -12,7 +17,7 @@ module SecretStorage
 
       before_validation :store_encryption_key_sha
       validates :id, :encrypted_value, :encryption_key_sha, presence: true
-      validates :id, format: /\A\S+\/\S*\Z/
+      validates :id, format: %r{\A([^/\s]+/){3}[^\s]+\Z}
 
       private
 
@@ -21,118 +26,127 @@ module SecretStorage
       end
     end
 
-    def self.read(key)
-      secret = Secret.find(key)
-      {
-        key: key,
-        updater_id: secret.updater_id,
-        creator_id: secret.creator_id,
-        updated_at: secret.updated_at,
-        created_at: secret.created_at,
-        value: secret.value
-      }
-    end
+    class << self
+      def read(key)
+        return unless secret = Secret.find_by_id(key)
+        secret_to_hash secret
+      end
 
-    def self.write(key, data)
-      secret = Secret.where(id: key).first_or_initialize
-      secret.updater_id = data.fetch(:user_id)
-      secret.creator_id ||= data.fetch(:user_id)
-      secret.value = data.fetch(:value)
-      secret.save
-    end
+      def read_multi(keys)
+        secrets = Secret.where(id: keys).all
+        secrets.each_with_object({}) { |s, a| a[s.id] = secret_to_hash(s) }
+      end
 
-    def self.delete(key)
-      Secret.delete(key)
-    end
+      def write(key, data)
+        secret = Secret.where(id: key).first_or_initialize
+        secret.updater_id = data.fetch(:user_id)
+        secret.creator_id ||= data.fetch(:user_id)
+        secret.value = data.fetch(:value)
+        secret.save
+      end
 
-    def self.keys
-      Secret.order(:id).pluck(:id)
+      def delete(key)
+        Secret.delete(key)
+      end
+
+      def keys
+        Secret.order(:id).pluck(:id)
+      end
+
+      private
+
+      def secret_to_hash(secret)
+        {
+          key: secret.id,
+          updater_id: secret.updater_id,
+          creator_id: secret.creator_id,
+          updated_at: secret.updated_at,
+          created_at: secret.created_at,
+          value: secret.value
+        }
+      end
     end
   end
 
   class HashicorpVault
-
-    VAULT_SECRET_BACKEND ='secret/'.freeze
     # we don't really want other directories in the key,
     # and there may be other chars that we find we don't like
-    ENCODINGS = {"/": "%2F"}
+    ENCODINGS = {"/": "%2F"}.freeze
 
-    def self.read(key)
-      safe_key = vault_path(
-        SecretStorage.parse_secret_key_part(key, :environment),
-        SecretStorage.parse_secret_key_part(key, :project),
-        SecretStorage.parse_secret_key_part(key, :deploy_group),
-        SecretStorage.parse_secret_key_part(key, :key),
-      )
-      result = vault_client.logical.read(safe_key)
-      raise(ActiveRecord::RecordNotFound) if result.data[:vault].nil?
-      result = result.to_h
-      result = result.merge(result.delete(:data))
-      result[:value] = result.delete(:vault)
-      result
-    end
+    class << self
+      def read(key)
+        key = vault_path(key)
+        result = vault_client.read(key)
+        return if !result || result.data[:vault].nil?
 
-    # and parse it
-    def self.write(key, data)
-      key = SecretStorage.parse_secret_key_part(key, :key)
-      vault_client.logical.write(
-        vault_path(
-          data[:environment_permalink],
-          data[:project_permalink],
-          data[:deploy_group_permalink],
-          key),
-        vault: data[:value])
-    end
+        result = result.to_h
+        result = result.merge(result.delete(:data))
+        result[:value] = result.delete(:vault)
+        result
+      end
 
-    def self.delete(key)
-      safe_key = vault_path(
-        SecretStorage.parse_secret_key_part(key, :environment),
-        SecretStorage.parse_secret_key_part(key, :project),
-        SecretStorage.parse_secret_key_part(key, :deploy_group),
-        SecretStorage.parse_secret_key_part(key, :key),
-      )
-      vault_client.logical.delete(safe_key)
-    end
-
-    def self.keys()
-      base_keys = vault_client.logical.list(VAULT_SECRET_BACKEND)
-      base_keys = keys_recursive(base_keys)
-      base_keys.map! { |secret_path| convert_path(secret_path, :decode) }
-    end
-
-    private
-
-    # get and cache a copy of the client that has a token
-    def self.vault_client
-      @vault_client ||= VaultClient.new
-    end
-
-    def self.keys_recursive(keys, key_path="")
-      keys.flat_map do |key|
-        new_key = key_path + key
-        if key.end_with?('/') # a directory
-          keys_recursive(vault_client.logical.list(VAULT_SECRET_BACKEND + new_key ), new_key)
-        else
-          new_key
+      def read_multi(keys)
+        keys.each_with_object({}) do |key, a|
+          if value = read(key)
+            a[key] = value
+          end
         end
       end
-    end
 
-    # path for these should be /env/project/deploygroup/key
-    def self.vault_path(environment, project, deploy_group, key)
-      VAULT_SECRET_BACKEND + SecretStorage.generate_secret_key(environment, project, deploy_group, convert_path(key, :encode))
-    end
-
-    def self.convert_path(string, direction)
-      string = string.dup
-      if direction == :decode
-        ENCODINGS.each { |k, v| string.gsub!(v.to_s, k.to_s) }
-      elsif direction == :encode
-        ENCODINGS.each { |k, v| string.gsub!(k.to_s, v.to_s) }
-      else
-        raise ArgumentError.new("direction is required")
+      def write(key, data)
+        vault_client.write(vault_path(key), vault: data[:value])
       end
-      string
+
+      def delete(key)
+        vault_client.delete(vault_path(key))
+      end
+
+      def keys
+        keys = vault_client.list(VAULT_SECRET_BACKEND + SAMSON_SECRET_NAMESPACE)
+        keys = keys_recursive(keys)
+        keys.uniq! # we read from multiple backends that might have the same keys
+        keys.map! do |secret_path|
+          convert_path(secret_path, :decode) # FIXME: ideally only decode the key(#4) part
+        end
+      end
+
+      private
+
+      # get and cache a copy of the client that has a token
+      def vault_client
+        @vault_client ||= VaultClient.new
+      end
+
+      def keys_recursive(keys, key_path = "")
+        keys.flat_map do |key|
+          new_key = key_path + key
+          if key.end_with?('/') # a directory
+            keys_recursive(vault_client.list(VAULT_SECRET_BACKEND + SAMSON_SECRET_NAMESPACE + new_key), new_key)
+          else
+            new_key
+          end
+        end
+      end
+
+      # key is the last element and should not include bad characters
+      def vault_path(key)
+        parts = key.split(SEPARATOR, SECRET_KEYS_PARTS.size)
+        parts[-1] = convert_path(parts[-1], :encode)
+        VAULT_SECRET_BACKEND + SAMSON_SECRET_NAMESPACE + parts.join(SEPARATOR)
+      end
+
+      # convert from/to escaped characters
+      def convert_path(string, direction)
+        string = string.dup
+        if direction == :decode
+          ENCODINGS.each { |k, v| string.gsub!(v.to_s, k.to_s) }
+        elsif direction == :encode
+          ENCODINGS.each { |k, v| string.gsub!(k.to_s, v.to_s) }
+        else
+          raise ArgumentError, "direction is required"
+        end
+        string
+      end
     end
   end
 
@@ -154,9 +168,18 @@ module SecretStorage
       backend.write(key, data)
     end
 
+    # reads a single key and raises ActiveRecord::RecordNotFound if it is not found
     def read(key, include_secret: false)
       data = backend.read(key) || raise(ActiveRecord::RecordNotFound)
       data.delete(:value) unless include_secret
+      data
+    end
+
+    # reads multiple keys from the backend into a hash
+    # [a, b, c] -> {a: 1, c: 2}
+    def read_multi(keys, include_secret: false)
+      data = backend.read_multi(keys)
+      data.each_value { |s| s.delete(:value) } unless include_secret
       data
     end
 
@@ -164,26 +187,12 @@ module SecretStorage
       BACKEND
     end
 
-    def generate_secret_key(environment=nil, project=nil, deploy_group=nil, key=nil)
-      if environment.nil?
-        raise ArgumentError.new("missing environment paramater")
-      end
-      if project.nil?
-        raise ArgumentError.new("missing project paramater")
-      end
-      if deploy_group.nil?
-        raise ArgumentError.new("missing deploy_group paramater")
-      end
-      if key.nil?
-        raise ArgumentError.new("missing key paramater")
-      end
-      environment.to_s + "/" + project.to_s + "/" + deploy_group.to_s + "/" + key.to_s
+    def generate_secret_key(data)
+      SECRET_KEYS_PARTS.map { |k| data.fetch(k) }.join(SEPARATOR)
     end
 
-    def parse_secret_key_part(key, part)
-      return false if key.nil?
-      index = SecretStorage::SECRET_KEYS_PARTS.index(part)
-      key.split('/', SecretStorage::SECRET_KEYS_PARTS.count)[index]
+    def parse_secret_key(key)
+      SECRET_KEYS_PARTS.zip(key.split(SEPARATOR, SECRET_KEYS_PARTS.size)).to_h
     end
   end
 end

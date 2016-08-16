@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module StagePermittedParams
   def stage_permitted_params
     @stage_permitted_params ||= ([
@@ -16,7 +17,7 @@ module StagePermittedParams
       :no_code_deployed,
       {
         deploy_group_ids: [],
-        command_ids: [],
+        command_ids: []
       }
     ] + Samson::Hooks.fire(:stage_permitted_params).flatten).freeze
   end

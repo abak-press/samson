@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -31,5 +32,29 @@ describe ReleaseService do
     release = service.create_release!(commit: commit, author: author)
 
     assert_equal release.version, stage.deploys.first.reference
+  end
+
+  context 'with release_deploy_conditions hook' do
+    let!(:stage) { project.stages.create!(name: "production", deploy_on_release: true) }
+
+    it 'does not deploy if the release_deploy_condition check is false' do
+      deployable_condition_check = lambda { |_, _| false }
+
+      Samson::Hooks.with_callback(:release_deploy_conditions, deployable_condition_check) do |_|
+        service.create_release!(commit: commit, author: author)
+
+        assert_equal nil, stage.deploys.first
+      end
+    end
+
+    it 'does deploy if the release_deploy_condition check is true' do
+      deployable_condition_check = lambda { |_, _| true }
+
+      Samson::Hooks.with_callback(:release_deploy_conditions, deployable_condition_check) do |_|
+        release = service.create_release!(commit: commit, author: author)
+
+        assert_equal release.version, stage.deploys.first.reference
+      end
+    end
   end
 end

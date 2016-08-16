@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module Kubernetes
   module Api
     class Pod
@@ -9,12 +10,13 @@ module Kubernetes
         @pod.metadata.name
       end
 
-      def valid?
-        @pod.metadata.labels.present? && @pod.metadata.labels.project_id.present?
+      def namespace
+        @pod.metadata.namespace
       end
 
+      # jobs are 'Succeeded' ... deploys are 'Running'
       def live?
-        @pod.status.phase == 'Running' && ready?
+        (phase == 'Running' && ready?) || (phase == 'Succeeded')
       end
 
       def restarted?
@@ -25,14 +27,6 @@ module Kubernetes
         @pod.status.phase
       end
 
-      def project_id
-        labels.project_id.to_i
-      end
-
-      def release_id
-        labels.release_id.to_i
-      end
-
       def deploy_group_id
         labels.deploy_group_id.to_i
       end
@@ -41,8 +35,8 @@ module Kubernetes
         labels.role_id.to_i
       end
 
-      def rc_unique_identifier
-        @pod.metadata.labels.rc_unique_identifier
+      def containers
+        @pod.spec.containers
       end
 
       private

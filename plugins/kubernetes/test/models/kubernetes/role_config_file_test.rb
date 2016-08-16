@@ -1,68 +1,61 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
-SingleCov.covered! uncovered: 3
+SingleCov.covered!
 
 describe Kubernetes::RoleConfigFile do
-  describe 'Parsing a valid Kubernetes config file' do
-    let(:contents) { read_kubernetes_sample_file('kubernetes_role_config_file.yml') }
+  let(:content) { read_kubernetes_sample_file('kubernetes_deployment.yml') }
+  let(:config_file) { Kubernetes::RoleConfigFile.new(content, 'some-file.yml') }
 
-    let(:config_file) { Kubernetes::RoleConfigFile.new(contents, 'some-file.yml') }
-
-    it 'loads a deployment with its contents' do
-      config_file.deployment.wont_be_nil
-
-      # Labels
-      config_file.deployment.metadata.labels.role.must_equal 'some-role'
-
-      # Replicas
-      config_file.deployment.spec.replicas.must_equal 2
-
-      # Selector
-      config_file.deployment.spec.selector.matchLabels.project.must_equal 'some-project'
-      config_file.deployment.spec.selector.matchLabels.role.must_equal 'some-role'
-
-      # Pod Template
-      config_file.deployment.spec.template.metadata.name.must_equal 'some-project-pod'
-      config_file.deployment.spec.template.metadata.labels.project.must_equal 'some-project'
-      config_file.deployment.spec.template.metadata.labels.role.must_equal 'some-role'
-
-      # Container
-      config_file.deployment.cpu_m.must_equal 0.5
-      config_file.deployment.ram_mi.must_equal 100
-    end
-
-    it 'loads a service with its contents' do
-      config_file.service.wont_be_nil
-
-      # Service Name
-      config_file.service.metadata.name.must_equal 'some-project'
-
-      # Labels
-      config_file.service.metadata.labels.project.must_equal 'some-project'
-
-      # Selector
-      config_file.service.spec.selector.project.must_equal 'some-project'
-      config_file.service.spec.selector.role.must_equal 'some-role'
-    end
-  end
-
-  describe 'Parsing a Kubernetes with a missing deployment' do
-    let(:contents) { read_kubernetes_sample_file('kubernetes_invalid_role_config_file.yml') }
-
-    it 'raises an exception' do
-      assert_raises RuntimeError do
-        Kubernetes::RoleConfigFile.new(contents, 'some-file.yml')
+  describe "#initialize" do
+    it "fails with a message that points to the broken file" do
+      e = assert_raises Samson::Hooks::UserError do
+        Kubernetes::RoleConfigFile.new(content, 'some-file.json')
       end
+      e.message.must_include 'some-file.json'
     end
   end
 
-  describe 'Parsing DaemonSet' do
-    let(:contents) { read_kubernetes_sample_file('kubernetes_role_config_file.yml') }
+  describe "#deploy" do
+    it 'finds a Deployment' do
+      config_file.deploy[:kind].must_equal 'Deployment'
+    end
 
-    it "returns a deployment" do
-      assert contents.sub!('Deployment', 'DaemonSet')
-      config_file = Kubernetes::RoleConfigFile.new(contents, 'some-file.yml')
-      config_file.deployment.spec.replicas.must_equal 2
+    it "finds a Daemonset" do
+      assert content.sub!('Deployment', 'DaemonSet')
+      assert content.sub!(/\n---.*/m, '')
+      config_file.deploy[:kind].must_equal 'DaemonSet'
+    end
+
+    it "blows up on unsupported" do
+      assert content.sub!('Deployment', 'SomethingElse')
+      assert_raises(Samson::Hooks::UserError) { config_file }
+    end
+
+    it "allows deep symbol access" do
+      config_file.deploy.fetch(:spec).fetch(:selector).fetch(:matchLabels).fetch(:project).must_equal 'some-project'
+    end
+  end
+
+  describe "#service" do
+    it 'loads a service with its content' do
+      config_file.service[:kind].must_equal 'Service'
+    end
+
+    it 'is nil when no service is found' do
+      content.replace(read_kubernetes_sample_file('kubernetes_job.yml'))
+      config_file.service.must_equal nil
+    end
+  end
+
+  describe "#job" do
+    it 'loads a job' do
+      content.replace(read_kubernetes_sample_file('kubernetes_job.yml'))
+      config_file.job[:kind].must_equal 'Job'
+    end
+
+    it 'is nil when no job is found' do
+      config_file.job.must_equal nil
     end
   end
 end

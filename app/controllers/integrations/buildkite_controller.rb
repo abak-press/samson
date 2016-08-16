@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class Integrations::BuildkiteController < Integrations::BaseController
   protected
 
@@ -27,5 +28,10 @@ class Integrations::BuildkiteController < Integrations::BaseController
 
   def message
     build_param[:message]
+  end
+
+  def release_params
+    extra_params = Samson::Hooks.fire(:buildkite_release_params, project, build_param)
+    super.merge(Hash[*extra_params.flatten])
   end
 end

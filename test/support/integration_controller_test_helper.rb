@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module IntegrationsControllerTestHelper
   def test_regular_commit(user_name, options, &block)
     describe "normal" do
@@ -16,7 +17,7 @@ module IntegrationsControllerTestHelper
         project.deploys.must_equal []
       end
 
-      if failed = options[:failed]
+      if (failed = options[:failed])
         it "doesn't trigger a deploy if the build did not pass" do
           post :create, payload.deep_merge(token: project.token).deep_merge(failed)
 
@@ -57,7 +58,7 @@ module IntegrationsControllerTestHelper
     end
   end
 
-  def does_not_deploy(name, &block)
+  def it_does_not_deploy(name, &block)
     describe name do
       before(&block) if block
 
@@ -68,6 +69,27 @@ module IntegrationsControllerTestHelper
 
         project.deploys.must_equal []
         response.status.must_equal 200
+      end
+    end
+  end
+
+  def it_ignores_skipped_commits
+    describe "skipping" do
+      # sanity check so we know this test has no false-positives where there is nothing deployed
+      it "creates a deploy with a normal message" do
+        post :create, payload.merge(token: project.token)
+        project.deploys.size.must_equal 1
+      end
+
+      ['[skip deploy]', '[deploy skip]'].each do |message|
+        describe "with [deploy skip]" do
+          let(:commit_message) { "Hey there #{message}" }
+
+          it "doesn't trigger a deploy" do
+            post :create, payload.merge(token: project.token)
+            project.deploys.must_equal []
+          end
+        end
       end
     end
   end

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -15,7 +16,9 @@ describe Stage do
 
       it "is not valid when on kubernetes but deploy groups do not know their cluster" do
         refute_valid stage
-        stage.errors.full_messages.must_equal ["Kubernetes Deploy groups need to have a cluster associated, but Pod 100 did not."]
+        stage.errors.full_messages.must_equal [
+          "Kubernetes Deploy groups need to have a cluster associated, but Pod 100 did not."
+        ]
       end
 
       it "is not valid when on kubernetes but deploy groups do not know their cluster" do
@@ -40,10 +43,18 @@ describe Stage do
       stage.save!
     end
 
-    it "calls seed to fill in missing roles (most useful for new projects) when kubernetes is set" do
-      Kubernetes::Role.expects(:seed!)
-      stage.kubernetes = true
-      stage.save!
+    describe "when kubernetes is set" do
+      before { stage.kubernetes = true }
+
+      it "calls seed to fill in missing roles (most useful for new projects)" do
+        Kubernetes::Role.expects(:seed!)
+        stage.save!
+      end
+
+      it "does not blow up when seeding fails, users can fix this later" do
+        Kubernetes::Role.expects(:seed!).raises(Samson::Hooks::UserError)
+        stage.save!
+      end
     end
   end
 end

@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module SamsonPipelines::StageConcern
   # Return true if any stages in the pipeline are marked production
   def production?
@@ -5,7 +6,7 @@ module SamsonPipelines::StageConcern
   end
 
   def next_stages
-    Stage.find(next_stage_ids)
+    Stage.where(id: next_stage_ids).to_a
   end
 
   protected

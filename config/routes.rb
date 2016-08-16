@@ -1,5 +1,19 @@
+# frozen_string_literal: true
 Samson::Application.routes.draw do
+  use_doorkeeper
   root to: 'projects#index'
+
+  namespace :api do
+    resources :deploys, only: [:index, :active_count] do
+      collection do
+        get :active_count
+      end
+    end
+
+    resources :stages, only: [:index] do
+      post :clone, to: 'stages#clone'
+    end
+  end
 
   resources :projects do
     resources :jobs, only: [:index, :new, :create, :show, :destroy]
@@ -63,7 +77,6 @@ Samson::Application.routes.draw do
   resources :deploys, only: [:index] do
     collection do
       get :active
-      get :active_count
       get :recent
       get :search
     end
@@ -78,6 +91,7 @@ Samson::Application.routes.draw do
   get '/auth/github/callback', to: 'sessions#github'
   get '/auth/google/callback', to: 'sessions#google'
   post '/auth/ldap/callback', to: 'sessions#ldap'
+  get '/auth/gitlab/callback', to: 'sessions#gitlab'
   get '/auth/failure', to: 'sessions#failure'
 
   get '/jobs/enabled', to: 'jobs#enabled', as: :enabled_jobs
@@ -85,7 +99,7 @@ Samson::Application.routes.draw do
   get '/login', to: 'sessions#new'
   get '/logout', to: 'sessions#destroy'
 
-  resources :csv_exports, only: [ :index, :new, :create, :show ]
+  resources :csv_exports, only: [:index, :new, :create, :show]
   resources :stars, only: [:create, :destroy]
   resources :dashboards, only: [:show] do
     member do
@@ -108,6 +122,7 @@ Samson::Application.routes.draw do
   end
 
   namespace :integrations do
+    post "/circleci/:token" => "circleci#create", as: :circleci_deploy
     post "/travis/:token" => "travis#create", as: :travis_deploy
     post "/semaphore/:token" => "semaphore#create", as: :semaphore_deploy
     post "/tddium/:token" => "tddium#create", as: :tddium_deploy

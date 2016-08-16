@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'samson/integration'
 
 class WebhooksController < ApplicationController
@@ -7,7 +8,6 @@ class WebhooksController < ApplicationController
 
   def index
     @webhooks = current_project.webhooks
-    @sources = Samson::Integration.sources
   end
 
   def create

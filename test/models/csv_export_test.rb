@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -8,17 +9,17 @@ describe CsvExport do
 
   describe ".old" do
     before do
-      @old_export = CsvExport.create({user: user, filters: {}})
+      @old_export = CsvExport.create(user: user, filters: {})
     end
 
     it "returns old created" do
-      @old_export.update_attributes({created_at: DateTime.now - 1.year, updated_at: DateTime.now})
+      @old_export.update_attributes(created_at: DateTime.now - 1.year, updated_at: DateTime.now)
       assert_equal(1, CsvExport.old.size)
     end
 
     it "returns old downloaded" do
-      @old_export.update_attributes({updated_at: DateTime.now - 13.hours, created_at: DateTime.now - 14.hours,
-        status: 'downloaded'})
+      @old_export.update_attributes(updated_at: DateTime.now - 13.hours, created_at: DateTime.now - 14.hours,
+                                    status: 'downloaded')
       assert_equal(1, CsvExport.old.size)
     end
 
@@ -93,6 +94,19 @@ describe CsvExport do
     it "includes created at" do
       @csv_export.download_name.must_include @csv_export.created_at.to_s(:number)
     end
+
+    it "includes project permalink if filtered and created at" do
+      project = projects(:test)
+      project.update_attribute(:deleted_at, Time.now)
+      @csv_export.update_attribute(:filters, 'stages.project_id': project.id)
+      @csv_export.download_name.must_include project.permalink
+      @csv_export.download_name.must_include @csv_export.created_at.to_s(:number)
+    end
+
+    it "does not includes double underscore if filtered and invalid project id" do
+      @csv_export.update_attribute(:filters, 'stages.project_id': -9999)
+      @csv_export.download_name.wont_include '__'
+    end
   end
 
   describe "#email" do
@@ -108,13 +122,14 @@ describe CsvExport do
 
   describe "#filters" do
     it "returns a ruby object" do
-      assert @csv_export.filters.class.must_equal Hash.new.class
+      @csv_export.filters.class.must_equal Hash
     end
 
     it "converts date list to range" do
-      @csv_export.update_attribute(:filters, {'deploys.created_at': (Date.new(1900,1,1)..Date.today)})
-      @csv_export.filters['deploys.created_at'].class.must_equal (1..2).class
-      @csv_export.filters['deploys.created_at'].must_equal (Date.new(1900,1,1)..Date.today)
+      @csv_export.update_attribute(:filters, 'deploys.created_at': Date.new(1900, 1, 1)..Date.today)
+      expected_range = DateTime.new(1900, 1, 1)..DateTime.parse(Date.today.to_s + "T23:59:59Z")
+      @csv_export.filters['deploys.created_at'].class.must_equal((1..2).class)
+      @csv_export.filters['deploys.created_at'].must_equal expected_range
     end
   end
 
@@ -123,7 +138,7 @@ describe CsvExport do
       @filename = @csv_export.path_file
       FileUtils.mkdir_p(File.dirname(@filename))
       File.new(@filename, 'w')
-      assert File.exists?(@filename), "File not created in before"
+      assert File.exist?(@filename), "File not created in before"
     end
 
     after do
@@ -132,12 +147,12 @@ describe CsvExport do
 
     it "deletes file when delete_file called" do
       @csv_export.delete_file
-      refute File.exists?(@filename), "File not removed by delete_file"
+      refute File.exist?(@filename), "File not removed by delete_file"
     end
 
     it "deletes file when destroy called" do
       @csv_export.destroy
-      refute File.exists?(@filename), "File not removed by destroy"
+      refute File.exist?(@filename), "File not removed by destroy"
     end
   end
 

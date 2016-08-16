@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../../test_helper'
 
 SingleCov.covered! uncovered: 11
@@ -43,17 +44,15 @@ describe Admin::Kubernetes::ClustersController do
       use_example_config
       let(:params) { {config_filepath: __FILE__, config_context: 'y', name: 'foobar'} }
 
-      before { Kubernetes::Cluster.any_instance.stubs(connection_valid?: true) }  # avoid real connection
+      before { Kubernetes::Cluster.any_instance.stubs(connection_valid?: true) } # avoid real connection
 
       it "redirects on success" do
-        Kubernetes::Cluster.any_instance.expects(:watch!) # spawn threads
         post :create, kubernetes_cluster: params
         assert_redirected_to "http://test.host/admin/kubernetes/clusters/#{Kubernetes::Cluster.last.id}"
       end
 
       it "renders when it fails to create" do
         params.delete(:name)
-        Kubernetes::Cluster.any_instance.expects(:watch!).never
         post :create, kubernetes_cluster: params
         assert_template :new
       end
@@ -68,17 +67,27 @@ describe Admin::Kubernetes::ClustersController do
       end
     end
 
+    describe "#show" do
+      use_example_config
+
+      it "renders" do
+        get :show, id: cluster.id
+        assert_template :show
+      end
+    end
+
     describe "#load_default_config_file" do
+      before { ::Kubernetes::Cluster.destroy_all }
+
       it "works even without an ENV var or old cluster" do
-        ::Kubernetes::Cluster.destroy_all
         get :new
         assert_template :new
         assigns['context_options'].must_be_empty
       end
 
-      it "works with an existing config file" do
+      it "works with an existing config file from ENV" do
         with_example_kube_config do |f|
-          with_env "KUBE_CONFIG_FILE": f do
+          with_env KUBE_CONFIG_FILE: f do
             get :new
             assert_template :new
             assigns['context_options'].wont_be_empty
@@ -86,7 +95,7 @@ describe Admin::Kubernetes::ClustersController do
         end
       end
 
-      it "uses the config file from another cluster" do
+      it "uses the config file from latest cluster" do
         with_example_kube_config do |f|
           create_kubernetes_cluster(config_filepath: f)
           get :new
@@ -95,8 +104,17 @@ describe Admin::Kubernetes::ClustersController do
         end
       end
 
+      it "uses the config file from current cluster" do
+        cluster
+        bad = create_kubernetes_cluster(name: 'bad')
+        bad.update_column(:config_filepath, 'bad')
+        get :edit, id: cluster.id
+        assert_template :edit
+        assigns['context_options'].wont_be_empty
+      end
+
       it "blows up with missing config file" do
-        with_env "KUBE_CONFIG_FILE": "nope" do
+        with_env KUBE_CONFIG_FILE: "nope" do
           assert_raises Errno::ENOENT do
             get :new
           end

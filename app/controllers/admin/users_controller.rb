@@ -1,8 +1,9 @@
+# frozen_string_literal: true
 require 'csv'
 
 class Admin::UsersController < ApplicationController
   before_action :authorize_admin!
-  before_action :authorize_super_admin!, only: [ :update, :destroy ]
+  before_action :authorize_super_admin!, only: [:update, :destroy]
 
   def index
     @users = User.search_by_criteria(params)
@@ -10,8 +11,7 @@ class Admin::UsersController < ApplicationController
       format.html
       format.json { render json: @users }
       format.csv do
-        datetime = Time.now.strftime "%Y%m%d_%H%M"
-        send_data User.to_csv, type: :csv, filename: "Users_#{datetime}.csv"
+        redirect_to(new_csv_export_path(format: :csv, type: :users))
       end
     end
   end
@@ -23,7 +23,9 @@ class Admin::UsersController < ApplicationController
 
   def update
     if user.update_attributes(user_params)
-      Rails.logger.info("#{current_user.name_and_email} changed the role of #{user.name_and_email} to #{user.role.name}")
+      Rails.logger.info(
+        "#{current_user.name_and_email} changed the role of #{user.name_and_email} to #{user.role.name}"
+      )
       head :ok
     else
       head :bad_request

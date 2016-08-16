@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class ReleaseService
   def initialize(project)
     @project = project
@@ -19,8 +20,10 @@ class ReleaseService
   def start_deploys(release)
     deploy_service = DeployService.new(release.author)
 
-    @project.auto_release_stages.each do |stage|
-      deploy_service.deploy!(stage, reference: release.version)
+    @project.stages.deployed_on_release.each do |stage|
+      if Samson::Hooks.fire(:release_deploy_conditions, stage, release).all?
+        deploy_service.deploy!(stage, reference: release.version)
+      end
     end
   end
 end

@@ -1,9 +1,14 @@
+# frozen_string_literal: true
 class Release < ActiveRecord::Base
   belongs_to :project, touch: true
   belongs_to :author, polymorphic: true
   belongs_to :build
 
   before_create :assign_release_number
+
+  # DEFAULT_RELEASE_NUMBER is the default value assigned to release#number by the database.
+  # This constant is here for convenience - the value that the database uses is in db/schema.rb.
+  DEFAULT_RELEASE_NUMBER = 1
 
   def self.sort_by_version
     order(number: :desc)
@@ -18,7 +23,7 @@ class Release < ActiveRecord::Base
   end
 
   def deployed_stages
-    @deployed_stages ||= project.stages.select {|stage| stage.current_release?(self) }
+    @deployed_stages ||= project.stages.select { |stage| stage.current_release?(self) }
   end
 
   def changeset
@@ -44,6 +49,10 @@ class Release < ActiveRecord::Base
   private
 
   def assign_release_number
+    # Detect whether the number has been overwritten by params, e.g. using the
+    # release-number-from-ci plugin.
+    return if number != DEFAULT_RELEASE_NUMBER && !number.nil?
+
     latest_release_number = project.releases.last.try(:number) || 0
     self.number = latest_release_number + 1
   end

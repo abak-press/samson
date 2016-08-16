@@ -1,13 +1,13 @@
+# frozen_string_literal: true
 class CsvExport < ActiveRecord::Base
   belongs_to :user
   serialize :filters, JSON
-  STATUS_VALUES = ['pending', 'started', 'finished', 'downloaded', 'failed', 'deleted']
+  STATUS_VALUES = ['pending', 'started', 'finished', 'downloaded', 'failed', 'deleted'].freeze
 
   before_destroy :delete_file
 
   validates :status, inclusion: { in: STATUS_VALUES }
   delegate :email, to: :user, allow_nil: true
-
 
   scope :old, lambda {
     end_date = Rails.application.config.samson.export_job.downloaded_age.seconds.ago
@@ -21,7 +21,7 @@ class CsvExport < ActiveRecord::Base
   end
 
   def download_name
-    "deploys_#{created_at.to_s(:number)}.csv"
+    "deploys_#{filters_project}#{created_at.to_s(:number)}.csv"
   end
 
   def path_file
@@ -32,9 +32,16 @@ class CsvExport < ActiveRecord::Base
     filter = super.clone
     if filter['deploys.created_at']
       dates = filter['deploys.created_at'].scan(/-?\d+-\d+-\d+/)
-      filter['deploys.created_at'] = (Date.parse(dates[0])..Date.parse(dates[1]))
+      filter['deploys.created_at'] = (DateTime.parse(dates[0] + "T00:00:00Z")..DateTime.parse(dates[1] + "T23:59:59Z"))
     end
     filter
+  end
+
+  def filters_project
+    if id = filters['stages.project_id']
+      proj = Project.with_deleted { Project.where(id: id).first.try(:permalink) }
+      proj + '_' if proj
+    end
   end
 
   def status!(status)

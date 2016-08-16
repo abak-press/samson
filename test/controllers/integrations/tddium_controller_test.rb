@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered! uncovered: 2
@@ -6,8 +7,8 @@ describe Integrations::TddiumController do
   extend IntegrationsControllerTestHelper
 
   let(:commit) { "dc395381e650f3bac18457909880829fc20e34ba" }
+  let(:commit_message) { "hi" }
   let(:project) { projects(:test) }
-
   let(:payload) do
     {
       "event" => "stop",
@@ -38,31 +39,13 @@ describe Integrations::TddiumController do
   before do
     Deploy.delete_all
     @webhook = project.webhooks.create!(stage: stages(:test_staging), branch: "production", source: 'tddium')
+    stub_github_api(
+      "repos/organization_name/repo_name/commits/dc395381e650f3bac18457909880829fc20e34ba",
+      commit: {message: commit_message}
+    )
   end
 
-  test_regular_commit "Tddium", no_mapping: {branch: "foobar"}, failed: {status: "failed"} do
-    stub_github_api("repos/organization_name/repo_name/commits/dc395381e650f3bac18457909880829fc20e34ba", commit: {message: "hi"})
-  end
+  test_regular_commit "Tddium", no_mapping: {branch: "foobar"}, failed: {status: "failed"}
 
-  it "doesn't trigger a deploy if the commit message contains [deploy skip]" do
-    @webhook.destroy!
-
-    stub_github_api("repos/organization_name/repo_name/commits/dc395381e650f3bac18457909880829fc20e34ba", commit: {message: "hi[deploy skip]"})
-
-    project.webhooks.create!(stage: stages(:test_staging), branch: "production", source: 'tddium')
-    post :create, payload.merge(token: project.token)
-
-    project.deploys.must_equal []
-  end
-
-  it "doesn't trigger a deploy if the commit message contains [skip deploy]" do
-    @webhook.destroy!
-
-    stub_github_api("repos/organization_name/repo_name/commits/dc395381e650f3bac18457909880829fc20e34ba", commit: {message: "hi[skip deploy]"})
-
-    project.webhooks.create!(stage: stages(:test_staging), branch: "production", source: 'tddium')
-    post :create, payload.merge(token: project.token)
-
-    project.deploys.must_equal []
-  end
+  it_ignores_skipped_commits
 end

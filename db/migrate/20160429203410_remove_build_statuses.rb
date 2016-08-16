@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class RemoveBuildStatuses < ActiveRecord::Migration
   def up
     drop_table :build_statuses
@@ -5,9 +6,9 @@ class RemoveBuildStatuses < ActiveRecord::Migration
 
   def down
     create_table "build_statuses" do |t|
-      t.integer  "build_id",                                     null: false
+      t.integer  "build_id", null: false
       t.string   "source",     limit: 255
-      t.string   "status",     limit: 255,   default: "pending", null: false
+      t.string   "status",     limit: 255, default: "pending", null: false
       t.string   "url",        limit: 255
       t.string   "summary",    limit: 512
       t.text     "data",       limit: 65535

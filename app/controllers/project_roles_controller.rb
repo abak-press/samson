@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class ProjectRolesController < ApplicationController
   include CurrentProject
 
@@ -16,7 +17,9 @@ class ProjectRolesController < ApplicationController
     end
 
     role_name = (role.role.try(:display_name) || 'None')
-    Rails.logger.info("#{current_user.name_and_email} set the role #{role_name} to #{user.name}} on project #{current_project.name}")
+    Rails.logger.info(
+      "#{current_user.name_and_email} set the role #{role_name} to #{user.name}} on project #{current_project.name}"
+    )
 
     render text: "Saved!"
   end

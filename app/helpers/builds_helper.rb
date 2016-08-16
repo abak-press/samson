@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module BuildsHelper
   def build_page_title
     "#{@build.nice_name} - #{@project.name}"
@@ -9,7 +10,7 @@ module BuildsHelper
 
   def short_sha(value, length: 7)
     # with Docker, SHA values can be of the form "sha256:0123abc..."
-    "#{value.split(':').last[0..length]}" if value
+    value.split(':').last[0..length].to_s if value
   end
 
   def git_ref_and_sha_for(build, make_link: false)

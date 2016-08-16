@@ -1,6 +1,7 @@
+# frozen_string_literal: true
 class Job < ActiveRecord::Base
   belongs_to :project
-  belongs_to :user
+  belongs_to :user, -> { unscope(where: 'deleted_at') }
 
   has_one :deploy
 
@@ -34,11 +35,6 @@ class Job < ActiveRecord::Base
     "#{user.name} #{summary_action} against #{short_reference}"
   end
 
-  def summary_for_process
-    t = (Time.now.to_i - start_time.to_i)
-    "ProcessID: #{pid} Running: #{t} seconds"
-  end
-
   def user
     super || NullUser.new(user_id)
   end
@@ -64,7 +60,7 @@ class Job < ActiveRecord::Base
     end
   end
 
-  %w{pending running succeeded cancelling cancelled failed errored}.each do |status|
+  %w[pending running succeeded cancelling cancelled failed errored].each do |status|
     define_method "#{status}?" do
       self.status == status
     end
@@ -115,7 +111,7 @@ class Job < ActiveRecord::Base
   end
 
   def url
-    deploy.try(:url) || AppRoutes.url_helpers.project_job_url(project, self)
+    deploy.try(:url) || Rails.application.routes.url_helpers.project_job_url(project, self)
   end
 
   def pid
@@ -125,9 +121,7 @@ class Job < ActiveRecord::Base
   private
 
   def validate_globally_unlocked
-    if Lock.global.exists?
-      errors.add(:project, 'is locked')
-    end
+    errors.add(:project, 'is locked') if Lock.global.exists?
   end
 
   def execution

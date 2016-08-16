@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'thread_safe'
 
 # Allows fanning out a stream to multiple listening threads. Each thread will
@@ -29,13 +30,13 @@ class OutputBuffer
     @closed = false
   end
 
-  def puts(line)
-    write(line.rstrip + "\n")
+  def puts(line = "")
+    write(line.to_s.rstrip << "\n")
   end
 
   def write(data, event = :message)
     @previous << [event, data] unless event == :close
-    @listeners.dup.each {|listener| listener.push([event, data]) }
+    @listeners.dup.each { |listener| listener.push([event, data]) }
   end
 
   def include?(event, data)
@@ -65,7 +66,8 @@ class OutputBuffer
       queue = Queue.new
       @listeners << queue
 
-      @previous.each(&block) # race condition: possibly duplicate messages when message comes in between adding listener and this
+      # race condition: possibly duplicate messages when message comes in between adding listener and this
+      @previous.each(&block)
 
       while (chunk = queue.pop) && chunk.first != :close
         yield chunk

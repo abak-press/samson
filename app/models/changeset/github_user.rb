@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require 'uri'
 
 class Changeset::GithubUser
@@ -17,7 +18,7 @@ class Changeset::GithubUser
   end
 
   def url
-    "https://#{Rails.application.config.samson.github.web_url}/#{login}"
+    "#{Rails.application.config.samson.github.web_url}/#{login}"
   end
 
   def login

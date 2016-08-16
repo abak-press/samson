@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered!
@@ -24,22 +25,19 @@ describe DeploysController do
   let(:changeset) { stub_everything(commits: [], files: [], pull_requests: [], jira_issues: []) }
 
   it "routes" do
-    assert_routing "/projects/1/stages/2/deploys/new", controller: "deploys", action: "new", project_id: "1", stage_id: "2"
+    assert_routing(
+      "/projects/1/stages/2/deploys/new",
+      controller: "deploys", action: "new", project_id: "1", stage_id: "2"
+    )
     assert_routing({ method: "post", path: "/projects/1/stages/2/deploys" },
       controller: "deploys", action: "create", project_id: "1", stage_id: "2")
   end
 
   as_a_viewer do
-    describe "a GET to :index" do
+    describe "#index" do
       it "renders html" do
         get :index, project_id: project
         assert_template :index
-      end
-
-      it "renders json" do
-        get :index, project_id: project, format: "json"
-        assert_response :ok
-        assert_equal "application/json", @response.content_type
       end
 
       it "renders without a project" do
@@ -61,7 +59,7 @@ describe DeploysController do
       end
     end
 
-    describe "a GET to :active" do
+    describe "#active" do
       with_and_without_project do
         it "renders the template" do
           get :active, project_id: project_id
@@ -75,20 +73,7 @@ describe DeploysController do
       end
     end
 
-  describe "a GET to :active_count" do
-    before do
-      stage.create_deploy(admin, {reference: 'reference'})
-      get :active_count
-    end
-
-    it "renders json" do
-      assert_equal "application/json", @response.content_type
-      assert_response :ok
-      @response.body.must_equal "1"
-    end
-  end
-
-    describe "a GET to :changeset" do
+    describe "#changeset" do
       before do
         get :changeset, id: deploy.id, project_id: project.to_param
       end
@@ -107,7 +92,7 @@ describe DeploysController do
       end
     end
 
-    describe "a GET to :show" do
+    describe "#show" do
       describe "with a valid deploy" do
         before { get :show, project_id: project.to_param, id: deploy.to_param }
 
@@ -135,34 +120,47 @@ describe DeploysController do
       end
     end
 
-    describe "a GET to :search" do
+    describe "#search" do
       before do
         Deploy.delete_all
         Job.delete_all
         cmd = 'cap staging deploy'
         project = Project.first
-        job_def =  {project_id: project.id, command: cmd, status: nil, user_id: admin.id}
+        job_def = {project_id: project.id, command: cmd, status: nil, user_id: admin.id}
         status = [
           {status: 'failed', production: true },
           {status: 'running', production: true},
-          {status:'succeeded', production: true},
-          {status:'succeeded', production: false}
+          {status: 'succeeded', production: true},
+          {status: 'succeeded', production: false}
         ]
 
         status.each do |stat|
           job_def[:status] = stat[:status]
           job = Job.create!(job_def)
-          Deploy.create!( {
+          Deploy.create!(
             stage_id: Stage.find_by_production(stat[:production]).id,
             reference: 'reference',
             job_id: job.id
-          } )
+          )
         end
       end
 
-      it "it renders json" do
+      it "renders json" do
         get :search, format: "json"
         assert_response :ok
+      end
+
+      it "renders csv" do
+        get :search, format: "csv"
+        assert_response :ok
+        @response.body.split("\n").length.must_equal 7 # 4 records and 3 meta rows
+      end
+
+      it "renders csv with limit (1) records and links to generate full report" do
+        get :search, format: "csv", limit: 1
+        assert_response :ok
+        @response.body.split("\n").length.must_equal 6 # 1 record and 5 meta rows
+        @response.body.split("\n")[2].split(",")[2].to_i.must_equal(1) # validate that count equals = csv_limit
       end
 
       it "renders html" do
@@ -251,7 +249,7 @@ describe DeploysController do
       Deploy.any_instance.stubs(:changeset).returns(changeset)
     end
 
-    describe "a GET to :new" do
+    describe "#new" do
       it "sets stage and reference" do
         get :new, project_id: project.to_param, stage_id: stage.to_param, reference: "abcd"
         deploy = assigns(:deploy)
@@ -259,8 +257,8 @@ describe DeploysController do
       end
     end
 
-    describe "a POST to :create" do
-      let(:params) {{ deploy: { reference: "master" }}}
+    describe "#create" do
+      let(:params) { { deploy: { reference: "master" }} }
 
       before do
         post :create, params.merge(project_id: project.to_param, stage_id: stage.to_param, format: format)
@@ -307,7 +305,7 @@ describe DeploysController do
       end
     end
 
-    describe "a POST to :confirm" do
+    describe "#confirm" do
       before do
         Deploy.delete_all # triggers more callbacks
 
@@ -319,7 +317,7 @@ describe DeploysController do
       end
     end
 
-    describe "a POST to :buddy_check" do
+    describe "#buddy_check" do
       let(:deploy) { deploys(:succeeded_test) }
       before { deploy.job.update_column(:status, 'pending') }
 
@@ -335,7 +333,7 @@ describe DeploysController do
       end
     end
 
-    describe "a DELETE to :destroy" do
+    describe "#destroy" do
       describe "with a deploy owned by the user" do
         before do
           DeployService.stubs(:new).with(user).returns(deploy_service)
@@ -371,7 +369,7 @@ describe DeploysController do
       DeployService.stubs(:new).with(user).returns(deploy_service)
     end
 
-    describe "a DELETE to :destroy" do
+    describe "#destroy" do
       it "cancels the deploy" do
         deploy_service.expects(:stop!).once
         delete :destroy, project_id: project.to_param, id: deploy.to_param

@@ -1,68 +1,56 @@
+# frozen_string_literal: true
 module Kubernetes
   class ReleaseDoc < ActiveRecord::Base
-    include Kubernetes::HasStatus
-
     self.table_name = 'kubernetes_release_docs'
 
     belongs_to :kubernetes_role, class_name: 'Kubernetes::Role'
     belongs_to :kubernetes_release, class_name: 'Kubernetes::Release'
     belongs_to :deploy_group
 
+    serialize :resource_template, JSON
+
     validates :deploy_group, presence: true
     validates :kubernetes_role, presence: true
     validates :kubernetes_release, presence: true
     validates :replica_target, presence: true, numericality: { greater_than: 0 }
-    validates :replicas_live, presence: true, numericality: { greater_than_or_equal_to: 0 }
-    validates :status, presence: true, inclusion: STATUSES
     validate :validate_config_file, on: :create
 
-    def fail!
-      update_attribute(:status, :failed)
-    end
+    before_save :store_resource_template, on: :create
 
     def build
       kubernetes_release.try(:build)
-    end
-
-    def update_release
-      kubernetes_release.update_status(self)
-    end
-
-    def update_status(live_pods)
-      case
-      when live_pods == replica_target then self.status = :live
-      when live_pods.zero? then self.status = :dead
-      when live_pods > replicas_live then self.status = :spinning_up
-      when live_pods < replicas_live then self.status = :spinning_down
-      end
-      save!
-    end
-
-    def update_replica_count(new_count)
-      update_attributes!(replicas_live: new_count)
-    end
-
-    def live_replicas_changed?(new_count)
-      new_count != replicas_live
-    end
-
-    def recovered?(failed_pods)
-      failed_pods == 0
     end
 
     def client
       deploy_group.kubernetes_cluster.client
     end
 
-    def deploy_to_kubernetes
-      resource = case deploy_yaml.resource_name
-      when 'deployment' then Kubeclient::Deployment.new(deploy_yaml.to_hash)
-      when 'daemon_set' then Kubeclient::DaemonSet.new(deploy_yaml.to_hash)
-      else raise "Unknown resource #{deploy_yaml.resource_name}"
-      end
+    def job?
+      resource_template.fetch('kind') == 'Job'
+    end
 
-      action = (resource_running?(resource) ? "update" : "create")
-      extension_client.send "#{action}_#{deploy_yaml.resource_name}", resource
+    def deploy
+      if deployment?
+        deploy = Kubeclient::Deployment.new(resource_template)
+        if deployed
+          extension_client.update_deployment deploy
+        else
+          extension_client.create_deployment deploy
+        end
+      elsif daemon_set?
+        daemon = Kubeclient::DaemonSet.new(resource_template)
+        delete_daemon_set(daemon) if deployed
+        extension_client.create_daemon_set daemon
+      elsif job?
+        # FYI per docs it is supposed to use batch api, but extension api works
+        job = Kubeclient::Job.new(resource_template)
+        if deployed
+          extension_client.delete_job kubernetes_role.resource_name, job.metadata.namespace
+        end
+        extension_client.create_job job
+      else
+        raise "Unknown deploy object #{resource_template.fetch('kind')}"
+      end
     end
 
     def ensure_service
@@ -73,7 +61,10 @@ module Kubernetes
       else
         data = service_hash
         if data.fetch(:metadata).fetch(:name).include?(Kubernetes::Role::GENERATED)
-          raise Samson::Hooks::UserError, "Service name for role #{kubernetes_role.name} was generated and needs to be changed before deploying."
+          raise(
+            Samson::Hooks::UserError,
+            "Service name for role #{kubernetes_role.name} was generated and needs to be changed before deploying."
+          )
         end
         client.create_service(Kubeclient::Service.new(data))
         'creating Service'
@@ -81,39 +72,93 @@ module Kubernetes
     end
 
     def raw_template
-      @raw_template ||= build.file_from_repo(template_name)
+      return @raw_template if defined?(@raw_template)
+      @raw_template = kubernetes_release.project.repository.file_content(template_name, kubernetes_release.git_sha)
     end
 
     def template_name
       kubernetes_role.config_file
     end
 
+    def deploy_template
+      parsed_config_file.deploy || parsed_config_file.job
+    end
+
+    def desired_pod_count
+      case resource_template.fetch('kind')
+      when 'DaemonSet'
+        # need http request since we do not know how many nodes we will match
+        deployed.status.desiredNumberScheduled
+      when 'Deployment', 'Job' then replica_target
+      else raise "Unsupported kind #{resource_template.fetch('kind')}"
+      end
+    end
+
     private
+
+    def deployment?
+      resource_template.fetch('kind') == 'Deployment'
+    end
+
+    def daemon_set?
+      resource_template.fetch('kind') == 'DaemonSet'
+    end
+
+    def store_resource_template
+      self.resource_template = ResourceTemplate.new(self)
+    end
 
     # Create new client as 'Deployment' API is on different path then 'v1'
     def extension_client
       deploy_group.kubernetes_cluster.extension_client
     end
 
-    def deploy_yaml
-      @deploy_yaml ||= DeployYaml.new(self)
-    end
-
-    def resource_running?(resource)
-      extension_client.send("get_#{deploy_yaml.resource_name}", resource.metadata.name, resource.metadata.namespace)
+    def deployed
+      extension_client.send(
+        "get_#{resource_template.fetch('kind').underscore}",
+        kubernetes_role.resource_name,
+        deploy_group.kubernetes_namespace
+      )
     rescue KubeException
       false
     end
 
+    # we cannot replace or update a daemonset, so we take it down completely
+    #
+    # was do what `kubectl delete daemonset NAME` does:
+    # - make it match no node
+    # - waits for current to reach 0
+    # - deletes the daemonset
+    def delete_daemon_set(daemon_set)
+      daemon_set_selector = [daemon_set.metadata.name, daemon_set.metadata.namespace]
+
+      # make it match no node
+      daemon_set = daemon_set.clone
+      daemon_set.spec.template.spec.nodeSelector = {rand(9999).to_s => rand(9999).to_s}
+      extension_client.update_daemon_set daemon_set
+
+      # wait for it to terminate all it's pods
+      loop do
+        sleep 2
+        current = extension_client.get_daemon_set(*daemon_set_selector)
+        break if current.status.currentNumberScheduled == 0 && current.status.numberMisscheduled == 0
+      end
+
+      # delete it
+      extension_client.delete_daemon_set *daemon_set_selector
+    end
+
     def service
-      if kubernetes_role.service_name.present?
+      return @service if defined?(@service)
+      @service = if kubernetes_role.service_name.present?
         Kubernetes::Service.new(role: kubernetes_role, deploy_group: deploy_group)
       end
     end
 
     def service_hash
       @service_hash || begin
-        hash = service_template
+        hash = parsed_config_file.service ||
+          raise(Samson::Hooks::UserError, "Unable to find Service definition in #{template_name}")
 
         hash.fetch(:metadata)[:name] = kubernetes_role.service_name
         hash.fetch(:metadata)[:namespace] = namespace
@@ -126,23 +171,15 @@ module Kubernetes
       end
     end
 
-    # Config has multiple entries like a ReplicationController and a Service
-    def service_template
-      services = Array.wrap(parsed_config_file).select { |doc| doc['kind'] == 'Service' }
-      unless services.size == 1
-        raise Samson::Hooks::UserError, "Template #{template_name} has #{services.size} services, having 1 section is valid."
-      end
-      services.first.with_indifferent_access
-    end
-
     def parsed_config_file
-      Kubernetes::Util.parse_file(raw_template, template_name)
+      @parsed_config_file ||= RoleConfigFile.new(raw_template, template_name)
     end
 
     def validate_config_file
-      if build && kubernetes_role && raw_template.blank?
-        errors.add(:build, "does not contain config file '#{template_name}'")
-      end
+      return if !build || !kubernetes_role
+      parsed_config_file
+    rescue Samson::Hooks::UserError
+      errors.add(:kubernetes_release, $!.message)
     end
 
     def namespace

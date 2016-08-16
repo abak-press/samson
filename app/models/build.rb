@@ -1,7 +1,8 @@
+# frozen_string_literal: true
 class Build < ActiveRecord::Base
   SHA1_REGEX = /\A[0-9a-f]{40}\Z/i
   SHA256_REGEX = /\A(sha256:)?[0-9a-f]{64}\Z/i
-  DIGEST_REGEX = /\A[\w._-]+\/[\w_-]+@sha256:[0-9a-f]{64}\Z/i
+  DIGEST_REGEX = /\A[\w._-]+\/[\w\/_-]+@sha256:[0-9a-f]{64}\Z/i
 
   belongs_to :project
   belongs_to :docker_build_job, class_name: 'Job'
@@ -24,10 +25,6 @@ class Build < ActiveRecord::Base
 
   def commit_url
     "#{project.repository_homepage}/tree/#{git_sha}"
-  end
-
-  def docker_build_output
-    docker_build_job.try(:output)
   end
 
   def docker_status
@@ -57,12 +54,8 @@ class Build < ActiveRecord::Base
     @docker_image = image
   end
 
-  def file_from_repo(path)
-    project.repository.file_content path, git_sha
-  end
-
   def url
-    AppRoutes.url_helpers.project_build_url(project, self)
+    Rails.application.routes.url_helpers.project_build_url(project, self)
   end
 
   private
@@ -82,7 +75,7 @@ class Build < ActiveRecord::Base
     end
 
     if git_ref.present?
-      commit = project.repository.commit_from_ref(git_ref, length: nil)
+      commit = project.repository.commit_from_ref(git_ref)
       if commit
         self.git_sha = commit unless git_sha.present?
       else

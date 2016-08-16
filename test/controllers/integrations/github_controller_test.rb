@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../../test_helper'
 
 SingleCov.covered!
@@ -20,7 +21,7 @@ describe Integrations::GithubController do
     Integrations::GithubController.github_hook_secret = 'test'
   end
 
-  does_not_deploy 'when the event is invalid' do
+  it_does_not_deploy 'when the event is invalid' do
     request.headers['X-Github-Event'] = 'event'
   end
 
@@ -31,7 +32,7 @@ describe Integrations::GithubController do
     post :create, payload.merge(token: project.token)
 
     project.deploys.must_equal []
-    response.status.must_equal 200
+    response.status.must_equal 401
   end
 
   describe 'with a code push event' do
@@ -58,26 +59,39 @@ describe Integrations::GithubController do
     let(:user_name) { 'Github' }
     let(:payload) do
       {
-        ref: 'refs/heads/dev',
         after: commit,
         number: '42',
-        pull_request: {state: 'open', body: 'imafixwolves [samson]'}
+        pull_request: {
+          head: {
+            ref: 'refs/heads/dev'
+          },
+          state: 'open',
+          body: 'imafixwolves [samson review]'
+        },
+        github: {
+          action: 'edited',
+          changes: {
+            body: {
+              from: 'something'
+            }
+          }
+        }
       }.with_indifferent_access
     end
     let(:api_response) do
-      stub({
+      stub(
         user: stub(login: 'foo'),
         merged_by: stub(login: 'bar'),
         body: '',
         head: stub(sha: commit, ref: 'refs/heads/dev')
-      })
+      )
     end
 
-    does_not_deploy 'with a non-open pull request state' do
+    it_does_not_deploy 'with a non-open pull request state' do
       payload.deep_merge!(pull_request: {state: 'closed'})
     end
 
-    does_not_deploy 'without "[samson]" in the body' do
+    it_does_not_deploy 'without "[samson review]" in the body' do
       payload.deep_merge!(pull_request: {body: 'imafixwolves'})
     end
   end

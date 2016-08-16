@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module StatusHelper
   ALERT_STATUS_MAPPING = {
     "succeeded" => "success",
@@ -5,7 +6,7 @@ module StatusHelper
     "errored" => "danger",
     "cancelling" => "warning",
     "cancelled" => "danger"
-  }
+  }.freeze
 
   LABEL_STATUS_MAPPING = ALERT_STATUS_MAPPING.merge(
     "running" => "primary"
@@ -22,12 +23,16 @@ module StatusHelper
   def status_panel(deploy)
     content = h deploy.summary
     if deploy.active?
-      content << content_tag(:ul, content_tag(:li, deploy.summary_for_process))
+      content << content_tag(:br)
+      content << "Started "
+      content << relative_time(deploy.start_time)
+      job = deploy.respond_to?(:job) ? deploy.job : deploy
+      content << " [Process ID: #{job.pid}]"
     end
 
     if deploy.finished?
       content << " "
-      content << content_tag(:span, deploy.start_time.rfc822, data: { time: datetime_to_js_ms(deploy.start_time) }, class: 'mouseover')
+      content << render_time(deploy.start_time, current_user.time_format)
       content << ", it took #{duration_text(deploy)}."
     end
 
@@ -37,15 +42,15 @@ module StatusHelper
   def duration_text(deploy)
     seconds  = (deploy.updated_at - deploy.start_time).to_i
 
-    duration = ""
+    duration = "".dup
 
     if seconds > 60
       minutes = seconds / 60
-      seconds = seconds - minutes * 60
+      seconds -= minutes * 60
 
       duration << "#{minutes} minute".pluralize(minutes)
     end
 
-    duration << (seconds > 0 || duration.size == 0 ? " #{seconds} second".pluralize(seconds) : "")
+    duration << (seconds > 0 || duration.empty? ? " #{seconds} second".pluralize(seconds) : "")
   end
 end

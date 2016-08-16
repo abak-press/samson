@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 require_relative '../test_helper'
 
 SingleCov.covered! uncovered: 1
@@ -8,7 +9,7 @@ describe TerminalOutputScanner do
 
   def tokens
     tokens = []
-    scanner.each {|token| tokens << token }
+    scanner.each { |token| tokens << token }
     tokens
   end
 

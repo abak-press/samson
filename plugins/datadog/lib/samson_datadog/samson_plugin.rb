@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 module SamsonDatadog
   class Engine < Rails::Engine
   end
@@ -9,7 +10,7 @@ Samson::Hooks.view :stage_show, "samson_datadog/show"
 Samson::Hooks.callback :stage_permitted_params do
   [
     :datadog_tags,
-    :datadog_monitor_ids,
+    :datadog_monitor_ids
   ]
 end
 

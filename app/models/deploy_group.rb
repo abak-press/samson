@@ -1,3 +1,4 @@
+# frozen_string_literal: true
 class DeployGroup < ActiveRecord::Base
   include Permalinkable
 
@@ -14,8 +15,9 @@ class DeployGroup < ActiveRecord::Base
 
   default_scope { order(:name) }
 
-  before_destroy :touch_stages
   after_save :touch_stages
+  before_destroy :touch_stages
+  after_destroy :destroy_deploy_groups_stages
 
   def self.enabled?
     ENV['DEPLOY_GROUP_FEATURE'].present?
@@ -45,5 +47,10 @@ class DeployGroup < ActiveRecord::Base
 
   def initialize_env_value
     self.env_value = name.to_s.parameterize if env_value.blank?
+  end
+
+  # DeployGroupsStage has no ids so the default dependent: :destroy fails
+  def destroy_deploy_groups_stages
+    DeployGroupsStage.where(deploy_group_id: id).delete_all
   end
 end
